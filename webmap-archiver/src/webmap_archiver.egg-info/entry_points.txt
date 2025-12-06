@@ -1,0 +1,2 @@
+[console_scripts]
+webmap-archive = webmap_archiver.cli:main

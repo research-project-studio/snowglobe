@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webmap-archiver"
+version = "0.1.0"
+description = "Transform HAR files into self-contained web map archives"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "WebMap Archiver Contributors"}
+]
+
+dependencies = [
+    "click>=8.0",
+    "pmtiles>=3.0",
+    "pydantic>=2.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+webmap-archive = "webmap_archiver.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
