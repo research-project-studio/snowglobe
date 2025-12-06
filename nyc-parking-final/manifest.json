@@ -1,0 +1,122 @@
+{
+  "name": "NYC Parking Regulations",
+  "description": "WebMap archive created from parkingregulations.nyc.har",
+  "created_at": "2025-12-06T01:03:55.613752",
+  "version": "1.0.0",
+  "bounds": {
+    "west": -74.53125,
+    "south": 40.44694705960049,
+    "east": -73.4765625,
+    "north": 40.97989806962013
+  },
+  "zoom_range": [
+    10,
+    13
+  ],
+  "tile_sources": [
+    {
+      "name": "maptiler-385.pbf",
+      "path": "tiles/maptiler-385.pbf.pmtiles",
+      "tile_type": "vector",
+      "format": "pbf",
+      "tile_count": 33,
+      "zoom_range": [
+        10,
+        13
+      ]
+    },
+    {
+      "name": "wxy-labs-parking_regs_v2",
+      "path": "tiles/wxy-labs-parking_regs_v2.pmtiles",
+      "tile_type": "vector",
+      "format": "mvt",
+      "tile_count": 31,
+      "zoom_range": [
+        10,
+        13
+      ]
+    }
+  ],
+  "viewer_path": "viewer.html",
+  "archive_mode": "full",
+  "style_extraction": {
+    "style_extraction": {
+      "method": "regex_v1",
+      "method_description": "Regex-based extraction from minified JavaScript",
+      "limitations": [
+        "Complex MapLibre expressions may be simplified or incomplete",
+        "Interactive states (hover, click) not fully captured",
+        "Minified variable names require pattern matching heuristics",
+        "Some layer properties may be missing"
+      ],
+      "future_improvements": [
+        "JavaScript AST parsing for complete expression extraction",
+        "Runtime style capture via browser extension",
+        "User-provided layer configuration override"
+      ],
+      "layers_extracted": 1,
+      "sources_without_styling": [
+        "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=bDxRFX9VXGshWw7IhDCz"
+      ],
+      "js_files_analyzed": 10,
+      "notes": [
+        "Analyzed 10 JavaScript files",
+        "Extracted styling for 1 layers",
+        "1 tile sources have no extracted styling"
+      ],
+      "layers": [
+        {
+          "source_id": null,
+          "source_layer": "parking_reg_sections_3fgb",
+          "layer_type": "symbol",
+          "colors_extracted": 9,
+          "confidence": 0.9,
+          "notes": [
+            "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
+            "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
+            "Found layer type: symbol",
+            "Extracted 9 color mappings"
+          ]
+        }
+      ]
+    }
+  },
+  "known_limitations": [
+    {
+      "id": "style_extraction_incomplete",
+      "area": "Data Layer Styling",
+      "description": "Styling for data layers added via JavaScript may be incomplete or simplified",
+      "impact": "Visual appearance may not match original map exactly",
+      "current_approach": "Regex-based extraction from minified JavaScript",
+      "future_improvements": [
+        "JavaScript AST parsing for complete expression extraction",
+        "Runtime style capture via browser extension calling map.getStyle()",
+        "User-provided layer configuration override file"
+      ],
+      "workaround": "Manually edit style/extracted_layers.json to refine styling"
+    },
+    {
+      "id": "interactive_states_missing",
+      "area": "Interactivity",
+      "description": "Hover, click, and other interactive states not captured",
+      "impact": "Map is static view only",
+      "current_approach": "Not implemented in Phase 1",
+      "future_improvements": [
+        "Extract feature-state expressions from JavaScript",
+        "Capture event handlers and popup content"
+      ]
+    },
+    {
+      "id": "basemap_style_simplified",
+      "area": "Basemap Styling",
+      "description": "Basemap uses captured style.json but sprites/glyphs may be missing",
+      "impact": "Labels and icons may not render",
+      "current_approach": "Style.json captured, sprites/glyphs not bundled in Phase 1",
+      "future_improvements": [
+        "Bundle sprite atlas and JSON",
+        "Bundle required glyph ranges",
+        "Rewrite URLs in style.json to local paths"
+      ]
+    }
+  ]
+}

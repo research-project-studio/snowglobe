@@ -1,0 +1,75 @@
+{
+  "extraction_report": {
+    "style_extraction": {
+      "method": "regex_v1",
+      "method_description": "Regex-based extraction from minified JavaScript",
+      "limitations": [
+        "Complex MapLibre expressions may be simplified or incomplete",
+        "Interactive states (hover, click) not fully captured",
+        "Minified variable names require pattern matching heuristics",
+        "Some layer properties may be missing"
+      ],
+      "future_improvements": [
+        "JavaScript AST parsing for complete expression extraction",
+        "Runtime style capture via browser extension",
+        "User-provided layer configuration override"
+      ],
+      "layers_extracted": 1,
+      "sources_without_styling": [
+        "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=bDxRFX9VXGshWw7IhDCz"
+      ],
+      "js_files_analyzed": 10,
+      "notes": [
+        "Analyzed 10 JavaScript files",
+        "Extracted styling for 1 layers",
+        "1 tile sources have no extracted styling"
+      ],
+      "layers": [
+        {
+          "source_id": null,
+          "source_layer": "parking_reg_sections_3fgb",
+          "layer_type": "symbol",
+          "colors_extracted": 9,
+          "confidence": 0.9,
+          "notes": [
+            "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
+            "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
+            "Found layer type: symbol",
+            "Extracted 9 color mappings"
+          ]
+        }
+      ]
+    }
+  },
+  "layers": [
+    {
+      "source_id": null,
+      "source_layer": "parking_reg_sections_3fgb",
+      "tile_url": "https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
+      "layer_type": "symbol",
+      "colors": {
+        "vehicle": "#a432a8",
+        "open": "#32a852",
+        "bus": "#329aa8",
+        "limited": "#a89832",
+        "stop_stand": "#a86b32",
+        "none": "#a83232",
+        "gov": "#7532a8",
+        "no_regs": "#517369",
+        "unknown": "#FFFFFF"
+      },
+      "paint_properties": {
+        "line-width": "[\"case\",[\"boolean\",[\"feature-state\",\"hover\"]",
+        "line-opacity": "[\"case\",[\"boolean\",[\"feature-state\",\"hover\"]"
+      },
+      "extraction_notes": [
+        "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
+        "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
+        "Found layer type: symbol",
+        "Extracted 9 color mappings"
+      ],
+      "confidence": 0.9
+    }
+  ],
+  "_comment": "This file documents extracted styling. Edit to refine layer appearance."
+}
