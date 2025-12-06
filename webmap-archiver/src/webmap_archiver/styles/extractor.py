@@ -111,6 +111,11 @@ class StyleExtractor:
             r'"source-layer"\s*:\s*"([^"]+)"'
         ),
 
+        # Variable assignment pattern for minified code: W="parking_reg_sections_3fgb"
+        'variable_assignment': re.compile(
+            r'([A-Z])\s*=\s*"([a-z_][a-z0-9_]+)"'
+        ),
+
         # Layer type
         'layer_type': re.compile(
             r'type\s*:\s*"(line|fill|circle|symbol)"'
@@ -187,7 +192,7 @@ class StyleExtractor:
 
     def _extract_colors(self, content: str, style: ExtractedLayerStyle) -> None:
         """Extract color mappings from content."""
-        # Find color object patterns
+        # Method 1: Find color object patterns like {vehicle:"#a432a8",open:"#32a852",...}
         color_objects = self.PATTERNS['color_object'].findall(content)
 
         for obj_str in color_objects:
@@ -195,19 +200,63 @@ class StyleExtractor:
             for category, color in pairs:
                 style.colors[category] = color
 
+        # Method 2: If no color objects found, look for individual color pairs
+        # This catches cases where colors are spread out or pattern doesn't match exactly
+        if not style.colors:
+            # Look for an object assignment pattern like w={category:"#hexcolor",...}
+            # This is common in minified code
+            obj_assignment = re.search(
+                r'=\{([a-z_]+:"#[0-9a-fA-F]{6}"(?:,[a-z_]+:"#[0-9a-fA-F]{6}")+)\}',
+                content
+            )
+            if obj_assignment:
+                obj_content = obj_assignment.group(1)
+                pairs = self.PATTERNS['color_pair'].findall(obj_content)
+                for category, color in pairs:
+                    # Filter out generic categories that are likely not map colors
+                    if category not in ('fill', 'stroke', 'color', 'background'):
+                        style.colors[category] = color
+        
+        # Method 3: If still no colors, look for semantic color mappings
+        # These are category names followed by hex colors that look like map styling
+        if not style.colors:
+            # Look for patterns like: vehicle:"#a432a8" where the category is meaningful
+            semantic_categories = {
+                'vehicle', 'open', 'bus', 'limited', 'stop_stand', 'other', 
+                'none', 'gov', 'no_regs', 'unknown', 'parking', 'street',
+                'residential', 'commercial', 'industrial', 'water', 'park'
+            }
+            all_pairs = self.PATTERNS['color_pair'].findall(content)
+            for category, color in all_pairs:
+                if category in semantic_categories:
+                    style.colors[category] = color
+
         if style.colors:
             style.extraction_notes.append(f"Extracted {len(style.colors)} color mappings")
             style.raw_matches['colors'] = str(style.colors)
 
     def _extract_source_layer(self, content: str, style: ExtractedLayerStyle) -> None:
-        """Extract source-layer name."""
+        """Extract source-layer name, resolving variable references if needed."""
+        # First, build a map of variable assignments (for minified code)
+        var_map = {}
+        var_matches = self.PATTERNS['variable_assignment'].findall(content)
+        for var_name, var_value in var_matches:
+            var_map[var_name] = var_value
+
+        # Now find source-layer references
         matches = self.PATTERNS['source_layer'].findall(content)
         for match in matches:
             # match is a tuple from the alternation groups
             source_layer = match[0] or match[1]
             if source_layer and source_layer not in ('null', 'undefined'):
-                style.source_layer = source_layer
-                style.extraction_notes.append(f"Found source-layer: {source_layer}")
+                # If it's a single capital letter, try to resolve it as a variable
+                if len(source_layer) == 1 and source_layer.isupper() and source_layer in var_map:
+                    resolved = var_map[source_layer]
+                    style.source_layer = resolved
+                    style.extraction_notes.append(f"Found source-layer: {resolved} (resolved from variable {source_layer})")
+                else:
+                    style.source_layer = source_layer
+                    style.extraction_notes.append(f"Found source-layer: {source_layer}")
                 break
 
     def _extract_layer_type(self, content: str, style: ExtractedLayerStyle) -> None:

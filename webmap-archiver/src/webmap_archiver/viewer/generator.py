@@ -38,9 +38,9 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{name} - WebMap Archive</title>
-    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
-    <script src="https://unpkg.com/pmtiles@2.11.0/dist/pmtiles.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: system-ui, -apple-system, sans-serif; }}
@@ -94,8 +94,8 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         <div class="layer-toggle" id="layer-controls"></div>
     </div>
     <script>
-        // Register PMTiles protocol
-        const protocol = new pmtiles.Protocol();
+        // Register PMTiles protocol with MapLibre
+        let protocol = new pmtiles.Protocol();
         maplibregl.addProtocol("pmtiles", protocol.tile);
 
         // Archive configuration
@@ -174,65 +174,102 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }}
 
             const layerType = extracted?.layerType || "line";
-            const sourceLayer = extracted?.sourceLayer || "";
+            
+            // Get all discovered source layers, or fall back to single sourceLayer
+            // This comes from actual tile inspection and is reliable
+            let sourceLayers = extracted?.allLayers || [];
+            if (sourceLayers.length === 0 && extracted?.sourceLayer) {{
+                sourceLayers = [extracted.sourceLayer];
+            }}
+            
             const layerIds = [];
+            
+            // If we have discovered source layers, create a layer for each
+            // If not, create layers without source-layer (will try to render all)
+            if (sourceLayers.length > 0) {{
+                console.log("Creating layers for source", src.name, "with discovered layers:", sourceLayers);
+                
+                sourceLayers.forEach((sourceLayer, idx) => {{
+                    const suffix = sourceLayers.length > 1 ? `-${{idx}}` : '';
+                    
+                    // Line layer
+                    if (layerType === "line" || !isDataLayer || !extracted) {{
+                        const lineId = src.name + "-line" + suffix;
+                        style.layers.push({{
+                            id: lineId,
+                            type: "line",
+                            source: src.name,
+                            "source-layer": sourceLayer,
+                            paint: {{
+                                "line-color": colorExpr || color,
+                                "line-width": isDataLayer ? 2 : 1,
+                                "line-opacity": isDataLayer ? 0.9 : 0.5
+                            }}
+                        }});
+                        layerIds.push(lineId);
+                    }}
 
-            // Create layer based on extracted or inferred type
-            if (layerType === "line" || !isDataLayer) {{
+                    // Fill layer for polygons
+                    if (layerType === "fill" || !extracted) {{
+                        const fillId = src.name + "-fill" + suffix;
+                        style.layers.push({{
+                            id: fillId,
+                            type: "fill",
+                            source: src.name,
+                            "source-layer": sourceLayer,
+                            filter: ["==", ["geometry-type"], "Polygon"],
+                            paint: {{
+                                "fill-color": colorExpr || color,
+                                "fill-opacity": isDataLayer ? 0.4 : 0.2
+                            }}
+                        }});
+                        layerIds.push(fillId);
+                    }}
+
+                    // Circle layer for points
+                    if (layerType === "circle" || !extracted) {{
+                        const circleId = src.name + "-circle" + suffix;
+                        style.layers.push({{
+                            id: circleId,
+                            type: "circle",
+                            source: src.name,
+                            "source-layer": sourceLayer,
+                            filter: ["==", ["geometry-type"], "Point"],
+                            paint: {{
+                                "circle-color": colorExpr || color,
+                                "circle-radius": isDataLayer ? 6 : 3,
+                                "circle-stroke-color": "#ffffff",
+                                "circle-stroke-width": isDataLayer ? 1 : 0
+                            }}
+                        }});
+                        layerIds.push(circleId);
+                    }}
+                }});
+            }} else {{
+                // No source layers discovered - this shouldn't happen for vector tiles
+                // but handle gracefully by omitting source-layer
+                console.warn("No source layers discovered for", src.name, "- layers may not render correctly");
+                
                 const lineId = src.name + "-line";
                 style.layers.push({{
                     id: lineId,
                     type: "line",
                     source: src.name,
-                    "source-layer": sourceLayer,
                     paint: {{
-                        "line-color": colorExpr || color,
-                        "line-width": isDataLayer ? 2 : 1,
-                        "line-opacity": isDataLayer ? 0.9 : 0.5
+                        "line-color": color,
+                        "line-width": 2,
+                        "line-opacity": 0.9
                     }}
                 }});
                 layerIds.push(lineId);
-            }}
-
-            if (layerType === "fill" || !extracted) {{
-                const fillId = src.name + "-fill";
-                style.layers.push({{
-                    id: fillId,
-                    type: "fill",
-                    source: src.name,
-                    "source-layer": sourceLayer,
-                    filter: ["==", ["geometry-type"], "Polygon"],
-                    paint: {{
-                        "fill-color": colorExpr || color,
-                        "fill-opacity": isDataLayer ? 0.4 : 0.2
-                    }}
-                }});
-                layerIds.push(fillId);
-            }}
-
-            if (layerType === "circle" || !extracted) {{
-                const circleId = src.name + "-circle";
-                style.layers.push({{
-                    id: circleId,
-                    type: "circle",
-                    source: src.name,
-                    "source-layer": sourceLayer,
-                    filter: ["==", ["geometry-type"], "Point"],
-                    paint: {{
-                        "circle-color": colorExpr || color,
-                        "circle-radius": isDataLayer ? 6 : 3,
-                        "circle-stroke-color": "#ffffff",
-                        "circle-stroke-width": isDataLayer ? 1 : 0
-                    }}
-                }});
-                layerIds.push(circleId);
             }}
 
             layerGroups[src.name] = {{
                 label: src.name + (extracted?.confidence ? ` (${{Math.round(extracted.confidence * 100)}}% styled)` : ""),
                 layers: layerIds,
                 isData: isDataLayer,
-                hasExtractedStyle: !!(extracted && extracted.colors && Object.keys(extracted.colors).length > 0)
+                hasExtractedStyle: !!(extracted && extracted.colors && Object.keys(extracted.colors).length > 0),
+                sourceLayers: sourceLayers
             }};
         }});
 
@@ -271,11 +308,18 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
                     labelText += group.hasExtractedStyle ? " ✓" : " (default style)";
                 }}
                 span.textContent = labelText;
-                span.title = group.hasExtractedStyle
+                
+                // Build tooltip with source layer info
+                let tooltip = group.hasExtractedStyle
                     ? "Styling extracted from original JavaScript"
                     : group.isData
                         ? "Using default styling - original could not be extracted"
                         : "Basemap layer";
+                
+                if (group.sourceLayers && group.sourceLayers.length > 0) {{
+                    tooltip += "\\n\\nSource layers: " + group.sourceLayers.join(", ");
+                }}
+                span.title = tooltip;
 
                 label.appendChild(checkbox);
                 label.appendChild(span);

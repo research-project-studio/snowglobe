@@ -20,6 +20,7 @@ from .har.classifier import RequestClassifier, RequestType
 from .tiles.detector import TileDetector
 from .tiles.coverage import CoverageCalculator
 from .tiles.pmtiles import PMTilesBuilder, PMTilesMetadata
+from .tiles.layer_inspector import discover_layers_from_tiles, get_primary_layer_name
 from .styles.extractor import extract_styles_from_har
 from .viewer.generator import ViewerGenerator, ViewerConfig
 from .archive.packager import ArchivePackager, TileSourceInfo
@@ -101,6 +102,9 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool)
     # Step 5: Build PMTiles for each source
     temp_dir = Path(tempfile.mkdtemp())
     pmtiles_files: list[tuple[str, Path, TileSourceInfo]] = []
+    
+    # Also store discovered layer names for each source
+    discovered_layers: dict[str, list[str]] = {}
 
     for template, (source, tiles) in sources.items():
         console.print(f"Building PMTiles for [cyan]{source.name}[/]...")
@@ -126,6 +130,16 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool)
         ))
 
         builder.build()
+        
+        # Discover layer names from tile content (only for vector tiles)
+        if source.tile_type == "vector":
+            layers = discover_layers_from_tiles(tiles)
+            layer_names = list(layers.keys())
+            discovered_layers[source.name] = layer_names
+            if layer_names:
+                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
+            else:
+                console.print(f"  [yellow]⚠ Could not discover layer names from tile content[/]")
 
         info = TileSourceInfo(
             name=source.name,
@@ -175,25 +189,70 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool)
     for _, _, info in pmtiles_files:
         # Detect if this is likely a basemap vs data layer
         is_basemap = any(domain in info.name.lower() for domain in BASEMAP_DOMAINS)
+        
+        # Get discovered layer names for this source (from actual tile inspection)
+        source_layers = discovered_layers.get(info.name, [])
 
-        # Find extracted styling for this source if available
+        # Find extracted styling for this source if available (for colors, etc.)
         extracted_style = None
         for layer in style_report.extracted_layers:
-            if layer.tile_url and info.name.lower() in layer.tile_url.lower():
-                extracted_style = layer
-                break
+            if layer.tile_url:
+                # Match by checking if key identifying parts of the source name appear in the URL
+                # This is more robust than substring matching after normalization
+                source_parts = info.name.lower().replace('-', ' ').replace('_', ' ').replace('.', ' ').split()
+                url_lower = layer.tile_url.lower()
+                
+                # Filter out common non-identifying parts
+                skip_parts = {'pbf', 'mvt', 'tiles', 'api', 'v1', 'v2', 'v3', 'v4'}
+                identifying_parts = [p for p in source_parts if p not in skip_parts and len(p) > 2]
+                
+                # Check if most identifying parts appear in URL
+                matches = sum(1 for part in identifying_parts if part in url_lower)
+                match_ratio = matches / len(identifying_parts) if identifying_parts else 0
+                
+                if verbose:
+                    console.print(f"  Matching '{info.name}' against layer URL '{layer.tile_url}'")
+                    console.print(f"    Identifying parts: {identifying_parts}")
+                    console.print(f"    Matches: {matches}/{len(identifying_parts)} ({match_ratio:.0%})")
+                
+                # Consider it a match if at least 50% of identifying parts are found
+                if match_ratio >= 0.5:
+                    extracted_style = layer
+                    if verbose:
+                        console.print(f"  ✓ Matched {info.name} to extracted layer")
+                    break
+
+        # Build extracted style config
+        # PRIORITY: Use discovered layer names from tiles (reliable), 
+        # but use extracted colors from JS (styling)
+        extracted_style_config = None
+        if extracted_style or source_layers or not is_basemap:
+            # Use discovered source-layer from tile inspection as primary source
+            # Fall back to JS-extracted source-layer only if tile inspection failed
+            primary_source_layer = None
+            if source_layers:
+                primary_source_layer = source_layers[0]  # Use first discovered layer
+                if verbose:
+                    console.print(f"  Using discovered source-layer: {primary_source_layer}")
+            elif extracted_style and extracted_style.source_layer:
+                primary_source_layer = extracted_style.source_layer
+                if verbose:
+                    console.print(f"  Using JS-extracted source-layer: {primary_source_layer}")
+            
+            extracted_style_config = {
+                "sourceLayer": primary_source_layer,
+                "allLayers": source_layers,  # Pass all discovered layers for reference
+                "colors": extracted_style.colors if extracted_style else {},
+                "layerType": extracted_style.layer_type if extracted_style else "line",
+                "confidence": extracted_style.extraction_confidence if extracted_style else 0.0
+            }
 
         tile_source_configs.append({
             "name": info.name,
             "path": info.path,
             "type": info.tile_type,
             "isOrphan": not is_basemap,  # Data layers are "orphan" = not in base style
-            "extractedStyle": {
-                "sourceLayer": extracted_style.source_layer if extracted_style else None,
-                "colors": extracted_style.colors if extracted_style else {},
-                "layerType": extracted_style.layer_type if extracted_style else "line",
-                "confidence": extracted_style.extraction_confidence if extracted_style else 0.0
-            } if extracted_style or not is_basemap else None
+            "extractedStyle": extracted_style_config
         })
 
     viewer_config = ViewerConfig(
