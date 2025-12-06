@@ -2,11 +2,26 @@
 
 ## Project Overview
 
-**Goal:** Build a Python CLI tool that transforms HAR files into self-contained web map archives, preserving vector and raster tiles, styles, and all dependencies in a portable format.
+**Goal:** Build a comprehensive web map archiving system that enables researchers, educators, and archivists to preserve web maps for long-term access and offline viewing.
 
-**Primary Use Case:** Enabling researchers, educators, and archivists to preserve web maps for long-term access and offline viewing.
+**Components:**
+1. **Python CLI & Processing Library** - Transform HAR files and capture bundles into self-contained archives
+2. **Browser Extension** (planned) - Capture web maps with one click, including runtime styles
+3. **Integration Layer** (planned) - Sync archives with Zotero, Are.na, and institutional repositories
 
-**This Briefing Covers:** Phase 1 implementation (MVP) with analysis of a real-world test HAR file.
+**Primary Use Cases:**
+- Personal research archive management (Zotero, Are.na integration)
+- Institutional web archiving workflows
+- Educational resource preservation
+- Offline map access for fieldwork
+
+**Current Status:** Phase 1 complete (MVP), Phase 1.5 complete (style fidelity improvements)
+
+**This Briefing Covers:** 
+- Phase 1 implementation details with test data analysis
+- Architecture decisions and rationale
+- Comprehensive roadmap through Phase 5
+- Integration goals for Zotero and Are.na
 
 ---
 
@@ -122,16 +137,21 @@ This is exactly why we designed the DATA_ONLY archive mode—the base style is r
 
 ---
 
-## Phase 1 Scope
+## Phase 1 Scope ✅ COMPLETE
 
-### Goals
-1. Parse HAR files and extract all entries with content
-2. Detect and classify tile requests (vector/raster, basemap/overlay)
-3. Extract tile coordinates from URLs
-4. Build PMTiles archive from captured tiles
-5. **Handle "orphan" data layers** - tile sources in HAR but not in style.json (this is the common case!)
-6. Generate a MapLibre HTML viewer with basic styling for all sources
-7. Output a ZIP archive with manifest
+### Goals (All Achieved)
+1. ✅ Parse HAR files and extract all entries with content
+2. ✅ Detect and classify tile requests (vector/raster, basemap/overlay)
+3. ✅ Extract tile coordinates from URLs
+4. ✅ Build PMTiles archive from captured tiles
+5. ✅ **Handle "orphan" data layers** - tile sources in HAR but not in style.json
+6. ✅ Generate a MapLibre HTML viewer with basic styling for all sources
+7. ✅ Output a ZIP archive with manifest
+
+### Phase 1.5 Additions ✅ COMPLETE
+8. ✅ **Layer inspection via protobuf parsing** - Extract source-layer names from tile content
+9. ✅ **Style override support** - `--style-override` option for map.getStyle() output
+10. ✅ **DevTools capture script** - `capture-style-help` command with instructions
 
 ### Critical Design Requirement
 
@@ -2258,37 +2278,792 @@ If extraction fails for a particular map pattern, the extraction_notes and raw_m
 
 After Phase 1 is working:
 
-### Priority 1: Style Extraction Improvements
-1. **JavaScript AST parsing** - Use a proper JS parser (via subprocess to Node.js or bundled parser) to extract complete MapLibre expressions
-2. **Runtime style capture** - Browser extension that calls `map.getStyle()` after page fully loads
-3. **User-provided overrides** - Allow users to supply a layer config file that takes precedence over extraction
-4. **Validation against tiles** - Parse vector tile schema to validate extracted source-layer names and properties
+### Priority 1: Original Site Preservation (Hybrid Archive)
 
-### Priority 2: Resource Bundling  
+**Rationale:** The original website IS the cartography. Legends, explanatory text, custom controls, branding, and UI choices are all part of what gives a map meaning. A generated viewer preserves the data but loses the context. Since site assets add only ~10% overhead (measured: 1.6MB site vs 15MB tiles for the test HAR), bundling everything is worthwhile.
+
+**Approach:** Hybrid archive with graceful degradation
+
+```
+archive.zip
+├── viewer.html                  # Generated fallback (always works, basic styling)
+├── original/                    # Complete original site
+│   ├── index.html              
+│   ├── _next/static/           # Framework assets (Next.js, etc.)
+│   │   ├── chunks/
+│   │   └── css/
+│   ├── assets/                 # Images, fonts, etc.
+│   └── manifest.json           # Original site's manifest if any
+├── tiles/
+│   ├── basemap.pmtiles
+│   └── data-layer.pmtiles
+├── style/
+│   └── extracted_layers.json
+├── serve.py                    # Local replay server (Python stdlib only)
+├── serve.bat                   # Windows launcher
+├── serve.sh                    # Unix launcher  
+└── manifest.json               # Archive manifest
+```
+
+**User Workflows:**
+
+1. **Quick View (No Setup)**
+   - Open `viewer.html` in browser
+   - Works from file://, works offline
+   - Basic styling, all data visible
+
+2. **Full Experience (Original Site)**
+   - Run `python serve.py` (or double-click launcher)
+   - Opens browser to `http://localhost:8080`
+   - Full original UI with legends, controls, context
+   - Tile requests intercepted and served from PMTiles
+
+**Implementation: `serve.py`**
+
+```python
+#!/usr/bin/env python3
+"""
+WebMap Archive Local Server
+
+Serves the archived original website with tile request interception.
+Uses only Python standard library - no dependencies required.
+
+Usage:
+    python serve.py [--port 8080] [--no-open]
+"""
+
+import http.server
+import socketserver
+import os
+import re
+import json
+import webbrowser
+import argparse
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+import struct
+import gzip
+
+# PMTiles reading (minimal implementation, stdlib only)
+class PMTilesReader:
+    """Minimal PMTiles reader using only stdlib."""
+    
+    def __init__(self, path):
+        self.path = path
+        self.file = open(path, 'rb')
+        self._read_header()
+    
+    def _read_header(self):
+        # PMTiles v3 header parsing
+        self.file.seek(0)
+        header = self.file.read(127)
+        # ... (header parsing implementation)
+        # For Phase 2, can use pmtiles library or implement minimal reader
+    
+    def get_tile(self, z, x, y):
+        """Retrieve a tile by z/x/y coordinates."""
+        # PMTiles tile lookup implementation
+        # Returns tile bytes or None
+        pass
+    
+    def close(self):
+        self.file.close()
+
+
+class ArchiveHandler(http.server.SimpleHTTPRequestHandler):
+    """HTTP handler that intercepts tile requests."""
+    
+    # Tile URL patterns to intercept (loaded from manifest)
+    tile_patterns = []
+    pmtiles_readers = {}
+    archive_root = Path('.')
+    
+    def do_GET(self):
+        # Check if this is a tile request
+        for pattern, pmtiles_name in self.tile_patterns:
+            match = re.search(pattern, self.path)
+            if match:
+                self.serve_tile(match, pmtiles_name)
+                return
+        
+        # Otherwise serve static file from original/
+        # Rewrite path to serve from original/ subdirectory
+        if self.path == '/' or self.path == '/index.html':
+            self.path = '/original/index.html'
+        elif not self.path.startswith('/tiles/') and not self.path.startswith('/original/'):
+            self.path = '/original' + self.path
+        
+        super().do_GET()
+    
+    def serve_tile(self, match, pmtiles_name):
+        """Serve a tile from PMTiles archive."""
+        try:
+            z = int(match.group('z'))
+            x = int(match.group('x'))
+            y = int(match.group('y'))
+            
+            reader = self.pmtiles_readers.get(pmtiles_name)
+            if not reader:
+                pmtiles_path = self.archive_root / 'tiles' / f'{pmtiles_name}.pmtiles'
+                reader = PMTilesReader(pmtiles_path)
+                self.pmtiles_readers[pmtiles_name] = reader
+            
+            tile_data = reader.get_tile(z, x, y)
+            
+            if tile_data:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/x-protobuf')
+                self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(tile_data)
+            else:
+                self.send_error(404, 'Tile not found')
+                
+        except Exception as e:
+            self.send_error(500, str(e))
+    
+    def end_headers(self):
+        # Add CORS headers for local development
+        self.send_header('Access-Control-Allow-Origin', '*')
+        super().end_headers()
+
+
+def load_tile_patterns(archive_root):
+    """Load tile URL patterns from manifest."""
+    manifest_path = archive_root / 'manifest.json'
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+    
+    patterns = []
+    for source in manifest.get('tile_sources', []):
+        # Convert tile URL template to regex
+        # e.g., "https://tiles.example.com/{z}/{x}/{y}.mvt" 
+        # -> r"/(\d+)/(\d+)/(\d+)\.mvt"
+        original_url = source.get('original_url', '')
+        name = source.get('name', '')
+        
+        if original_url:
+            # Extract the path pattern
+            pattern = re.sub(r'\{z\}', r'(?P<z>\\d+)', original_url)
+            pattern = re.sub(r'\{x\}', r'(?P<x>\\d+)', pattern)
+            pattern = re.sub(r'\{y\}', r'(?P<y>\\d+)', pattern)
+            patterns.append((pattern, name))
+    
+    return patterns
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Serve archived web map')
+    parser.add_argument('--port', type=int, default=8080, help='Port to serve on')
+    parser.add_argument('--no-open', action='store_true', help="Don't open browser")
+    args = parser.parse_args()
+    
+    archive_root = Path(__file__).parent
+    
+    # Load configuration
+    ArchiveHandler.archive_root = archive_root
+    ArchiveHandler.tile_patterns = load_tile_patterns(archive_root)
+    
+    os.chdir(archive_root)
+    
+    with socketserver.TCPServer(("", args.port), ArchiveHandler) as httpd:
+        url = f"http://localhost:{args.port}"
+        print(f"Serving archive at {url}")
+        print("Press Ctrl+C to stop")
+        
+        if not args.no_open:
+            webbrowser.open(url)
+        
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+
+
+if __name__ == '__main__':
+    main()
+```
+
+**Site Asset Extraction:**
+
+```python
+# New module: site/extractor.py
+
+class SiteExtractor:
+    """Extract original site assets from HAR."""
+    
+    # Asset types to preserve
+    PRESERVE_TYPES = [
+        'text/html',
+        'text/css', 
+        'application/javascript',
+        'text/javascript',
+        'image/png',
+        'image/jpeg',
+        'image/svg+xml',
+        'image/webp',
+        'font/woff',
+        'font/woff2',
+        'application/font-woff',
+    ]
+    
+    # Domains to include (derived from initial page URL)
+    # Excludes: analytics, ads, third-party widgets
+    EXCLUDE_DOMAINS = [
+        'google-analytics.com',
+        'googletagmanager.com',
+        'facebook.com',
+        'twitter.com',
+        'doubleclick.net',
+        'goatcounter.com',  # Analytics in test HAR
+    ]
+    
+    def extract(self, entries: list, base_url: str) -> dict[str, bytes]:
+        """
+        Extract site assets from HAR entries.
+        
+        Returns: dict mapping relative paths to content bytes
+        """
+        assets = {}
+        base_domain = urlparse(base_url).netloc
+        
+        for entry in entries:
+            url = entry.url
+            parsed = urlparse(url)
+            
+            # Skip excluded domains
+            if any(exc in parsed.netloc for exc in self.EXCLUDE_DOMAINS):
+                continue
+            
+            # Skip tile requests (handled separately)
+            if self._is_tile_request(url):
+                continue
+            
+            # Check MIME type
+            mime = entry.mime_type.split(';')[0].strip()
+            if mime not in self.PRESERVE_TYPES:
+                continue
+            
+            # Skip if no content
+            if not entry.content:
+                continue
+            
+            # Determine relative path
+            if parsed.netloc == base_domain:
+                # Same domain - use path directly
+                rel_path = parsed.path.lstrip('/')
+                if not rel_path or rel_path.endswith('/'):
+                    rel_path += 'index.html'
+            else:
+                # Different domain (CDN, etc.) - preserve under _external/
+                rel_path = f"_external/{parsed.netloc}{parsed.path}"
+            
+            assets[rel_path] = entry.content
+        
+        return assets
+    
+    def _is_tile_request(self, url: str) -> bool:
+        """Check if URL is a map tile request."""
+        return bool(re.search(r'/\d+/\d+/\d+\.(pbf|mvt|png|jpg|webp)', url))
+```
+
+**Edge Cases to Handle:**
+
+1. **Inline scripts that construct URLs dynamically**
+   - May not work if tile URL is built at runtime from config
+   - Document in manifest as potential limitation
+
+2. **Authentication/API keys**
+   - Strip from archived URLs
+   - serve.py doesn't need them (serves local)
+
+3. **Framework-specific routing (Next.js, React Router)**
+   - May need to serve index.html for all routes
+   - Add fallback in serve.py
+
+4. **External CDN resources (fonts, libraries)**
+   - Include in archive under `_external/`
+   - Rewrite references in HTML/CSS (stretch goal)
+
+5. **WebSocket/real-time features**
+   - Won't work offline
+   - Document as limitation
+
+### Priority 2: Style Extraction Improvements
+1. **JavaScript AST parsing** - Use a proper JS parser to extract complete MapLibre expressions
+2. **Runtime style capture** - Browser extension that calls `map.getStyle()` after page fully loads
+3. ✅ **User-provided overrides** - `--style-override` CLI option now accepts map.getStyle() output
+4. ✅ **Validation against tiles** - Layer inspector extracts source-layer names from tile content via protobuf parsing
+
+### Priority 3: Resource Bundling  
 1. **Style.json processing** - Rewrite source URLs to local PMTiles paths
 2. **Sprite bundling** - Include sprite atlas PNG and JSON
 3. **Glyph bundling** - Include required font glyph ranges
 
-### Priority 3: Archive Modes
+### Priority 4: Archive Modes
 1. **DATA_ONLY mode** - Skip basemap tiles, reference external
 2. **STYLE_ONLY mode** - No tiles, just style recipe
 3. **HYBRID mode** - Full data, limited basemap zoom range
 4. **Basemap classification** - Detect and handle basemap sources differently
 
-### Priority 4: Coverage Expansion
+### Priority 5: Coverage Expansion
 1. **Tile fetching** - Fetch missing tiles within bounds at ±N zoom levels
 2. **Progress reporting** - Show download progress
 3. **Resume capability** - Handle interrupted fetches
 
 ---
 
-## Questions for Implementation
+## Architecture & Long-Term Roadmap
 
-1. Should the CLI use async for tile building (performance)?
-2. How to handle HAR files without tile content (truncated responses)?
-3. Should we validate PMTiles output before packaging?
-4. Error handling strategy - fail fast or collect warnings?
+### Design Philosophy
+
+The project follows a **layered architecture** that separates concerns to support multiple use cases:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        CAPTURE LAYER (JavaScript)                        │
+│  Browser extension, bookmarklet, or DevTools script                     │
+│  - Detect web maps on page                                              │
+│  - Capture network requests (HAR)                                       │
+│  - Call map.getStyle() for runtime style                                │
+│  - Export standardized capture bundle                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      PROCESSING LAYER (Python)                          │
+│  CLI tool and/or web service                                            │
+│  - Parse HAR and extract tiles                                          │
+│  - Build PMTiles archives                                               │
+│  - Generate self-contained viewer                                       │
+│  - Package final archive                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      INTEGRATION LAYER (APIs)                           │
+│  Zotero, Are.na, institutional repositories                             │
+│  - Attach archives to library items                                     │
+│  - Sync with cloud services                                             │
+│  - Publish to research repositories                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why Python for Processing (Not JavaScript)
+
+| Capability | Python | JavaScript |
+|------------|--------|------------|
+| HAR parsing | ✓ Easy | ✓ Easy |
+| PMTiles writing | ✓ Mature (`pmtiles`) | ⚠️ Less mature |
+| Vector tile parsing | ✓ Good | ✓ Good |
+| Browser extension | ✗ Impossible | ✓ Required |
+| Playwright/Puppeteer | ✓ Full support | ✓ Full support |
+| Zotero integration | ⚠️ Via API | ✓ Native (JS-based) |
+| Are.na integration | ✓ Via API | ✓ Via API |
+| CLI tool | ✓ Excellent | ✓ Good |
+
+**Conclusion:** Keep Python for processing. The browser extension (which must be JS) should be lightweight—capture only, delegate processing.
 
 ---
 
-*End of Briefing*****
+## Capture Bundle Format Specification
+
+The **Capture Bundle** is the standardized interchange format between the browser capture layer and the Python processing layer:
+
+```typescript
+interface WebMapCapture {
+  version: "1.0";
+  
+  // From HAR export or Performance API
+  har?: HARLog;
+  
+  // From map.getStyle() - the complete runtime style
+  style?: MapLibreStyle;
+  
+  // From map.getCenter(), getZoom(), getBounds()
+  viewport: {
+    center: [number, number];
+    zoom: number;
+    bounds: [[number, number], [number, number]];
+    bearing?: number;
+    pitch?: number;
+  };
+  
+  // Page metadata
+  metadata: {
+    url: string;
+    title: string;
+    capturedAt: string;  // ISO 8601
+    mapLibraryVersion?: string;
+    mapLibraryType?: "maplibre" | "mapbox" | "leaflet" | "openlayers";
+  };
+  
+  // Optional: pre-extracted tile data (if extension has access)
+  tiles?: Array<{
+    url: string;
+    z: number;
+    x: number;
+    y: number;
+    data: string;  // base64-encoded
+  }>;
+}
+```
+
+**File Extension:** `.webmap-capture` or `.webmap.json`
+
+**Processing Paths:**
+
+1. **Local CLI:** `webmap-archive process capture.webmap.json`
+2. **Local Service:** `POST http://localhost:8080/process` with capture bundle
+3. **Web Service:** `POST https://api.webmap-archive.org/process` with capture bundle
+
+---
+
+## Integration Goals
+
+### Zotero Integration
+
+The user maintains thousands of resources in Zotero and uses the Zotero Connector browser extension to save web pages. Integration goals:
+
+1. **Attachment-based:** Archive files attach to Zotero library items
+2. **Metadata sync:** Map metadata (title, URL, bounds, layers) becomes Zotero item metadata
+3. **Viewer access:** Open archived maps directly from Zotero
+
+**Implementation Options:**
+
+A. **Post-processing script:** After manual HAR capture, run script that creates archive and adds to Zotero via API
+```python
+from pyzotero import zotero
+
+zot = zotero.Zotero(library_id, library_type, api_key)
+item = zot.create_items([{
+    'itemType': 'webpage',
+    'title': 'NYC Parking Regulations Map',
+    'url': 'https://parkingregulations.nyc/',
+    'accessDate': datetime.now().isoformat(),
+    'tags': [{'tag': 'webmap'}, {'tag': 'nyc'}]
+}])
+zot.attachment_simple([archive_path], item['successful']['0']['key'])
+```
+
+B. **Zotero Translator:** Write a Zotero translator that recognizes web maps and triggers capture
+- More complex but seamless UX
+- Requires understanding Zotero translator format
+
+C. **Companion extension:** Separate extension that works alongside Zotero Connector
+- Detects maps, captures, creates Zotero item + attachment
+- Can share auth/settings with main extension
+
+### Are.na Integration
+
+The user also uses Are.na to log and save web resources, including maps.
+
+1. **Block creation:** Upload viewer.html or archive as Are.na block
+2. **Channel organization:** Add to relevant channels
+3. **Metadata:** Preserve title, source URL, capture date
+
+```python
+import requests
+
+arena_api = "https://api.are.na/v2"
+headers = {"Authorization": f"Bearer {token}"}
+
+# Upload as attachment block
+response = requests.post(
+    f"{arena_api}/channels/{channel_slug}/blocks",
+    headers=headers,
+    files={"attachment": open(archive_path, "rb")},
+    data={"title": "NYC Parking Regulations Map Archive"}
+)
+```
+
+### Ideal Workflow
+
+```
+User visits web map
+        │
+        ▼
+┌─────────────────────────────────┐
+│ Browser Extension detects map   │
+│ Shows "Archive Map" button      │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ User clicks "Archive Map"       │
+│ Extension captures:             │
+│  - HAR (network requests)       │
+│  - Style (map.getStyle())       │
+│  - Viewport (center, zoom)      │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ Extension sends to processor    │
+│ (local service or web API)      │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│ Processor builds archive        │
+│ Returns .zip file               │
+└─────────────────────────────────┘
+        │
+        ├────────────┬────────────┐
+        ▼            ▼            ▼
+   ┌─────────┐  ┌─────────┐  ┌─────────┐
+   │ Download │  │ Zotero  │  │ Are.na  │
+   │ locally  │  │ library │  │ channel │
+   └─────────┘  └─────────┘  └─────────┘
+```
+
+---
+
+## Development Phases (Revised)
+
+### Phase 1: MVP ✅ COMPLETE
+- HAR parsing and tile extraction
+- PMTiles archive building
+- Layer inspection via protobuf parsing
+- Basic viewer generation
+- ZIP archive packaging
+
+### Phase 1.5: Style Fidelity ✅ COMPLETE
+- `--style-override` CLI option for map.getStyle() output
+- `capture-style-help` command with DevTools script
+- Layer name extraction from tile content (protobuf parsing)
+- Hybrid approach: reliable layer names from tiles + colors from JS
+
+### Phase 2A: Processing Improvements (Current Priority)
+Focus: Make the Python processing layer production-ready
+
+1. **Resource Bundling**
+   - Style.json rewriting (local PMTiles paths)
+   - Sprite atlas bundling (PNG + JSON)
+   - Glyph range bundling
+   - Font fallback handling
+
+2. **Archive Modes**
+   - DATA_ONLY mode (external basemap reference)
+   - HYBRID mode (full data, limited basemap)
+   - Basemap detection and classification
+
+3. **Original Site Preservation**
+   - Extract HTML/CSS/JS from HAR
+   - serve.py for original site + tile interception
+   - Framework-aware routing (SPA support)
+
+4. **Coverage Expansion**
+   - Fetch missing tiles within bounds
+   - ±N zoom level expansion
+   - Progress reporting and resume capability
+
+### Phase 2B: Capture Bundle Format
+Focus: Define and implement the interchange format
+
+1. **Specification finalization**
+   - Document capture bundle JSON schema
+   - Version the format for future compatibility
+   - Define required vs optional fields
+
+2. **CLI support**
+   - `webmap-archive process <capture.json>` command
+   - Accept capture bundle as input (not just HAR)
+   - Backward compatibility with HAR-only workflow
+
+3. **Validation**
+   - Validate capture bundle structure
+   - Check for required fields (viewport, metadata)
+   - Warn on missing optional fields (style, tiles)
+
+### Phase 3: Browser Extension
+Focus: JavaScript capture layer for seamless UX
+
+1. **Core Extension**
+   - Detect MapLibre/Mapbox/Leaflet maps on page
+   - Capture HAR via devtools API or Performance API
+   - Call map.getStyle() when map is ready
+   - Bundle into capture format
+   - Export as file or send to local service
+
+2. **Map Detection**
+   - Look for maplibregl-map, mapboxgl-map classes
+   - Check for window.maplibregl, window.mapboxgl
+   - Detect Leaflet, OpenLayers patterns
+   - Handle framework wrappers (react-map-gl, vue-maplibre-gl)
+
+3. **UI/UX**
+   - Browser action icon with map detection indicator
+   - Popup with capture options
+   - Progress indicator during capture
+   - Download or service integration options
+
+4. **Local Service Communication**
+   - Detect if local processing service is running
+   - POST capture bundle to localhost:PORT
+   - Fall back to file download if no service
+
+### Phase 4: Integrations
+Focus: Zotero, Are.na, and institutional connections
+
+1. **Zotero Integration**
+   - pyzotero-based attachment workflow
+   - CLI option: `--zotero-library <id>`
+   - Metadata mapping (title, URL, tags)
+   - Optional: Zotero translator for direct capture
+
+2. **Are.na Integration**
+   - API-based block creation
+   - CLI option: `--arena-channel <slug>`
+   - Support for attachment and link block types
+
+3. **Local Service API**
+   - FastAPI/Flask wrapper around processing code
+   - REST endpoints for processing
+   - WebSocket for progress updates
+   - CORS for browser extension access
+
+### Phase 5: Headless Browser Automation
+Focus: Fully automated capture for institutional/batch use
+
+1. **Playwright Integration**
+   - `webmap-archive capture <URL>` command
+   - Navigate to URL, wait for map load
+   - Capture HAR + style + viewport automatically
+   - No browser extension required
+
+2. **Batch Processing**
+   - Process list of URLs from file
+   - Configurable timeouts and retries
+   - Resume interrupted batch jobs
+
+3. **Bot Detection Handling**
+   - User-agent configuration
+   - Optional headed mode for problematic sites
+   - Manual intervention hooks
+
+4. **Institutional Features**
+   - Output to institutional repository formats
+   - WARC integration for web archiving workflows
+   - Metadata export (Dublin Core, etc.)
+
+---
+
+## Current CLI Commands
+
+```bash
+# Create archive from HAR
+webmap-archive create <har_file> [options]
+  -o, --output PATH        Output ZIP path
+  -n, --name TEXT          Archive name
+  -v, --verbose            Verbose output
+  --style-override PATH    JSON file with complete MapLibre style
+
+# Analyze HAR without creating archive
+webmap-archive inspect <har_file>
+
+# Show style capture instructions
+webmap-archive capture-style-help
+```
+
+## Planned CLI Commands
+
+```bash
+# Process capture bundle (Phase 2B)
+webmap-archive process <capture.json> [options]
+  -o, --output PATH        Output ZIP path
+  --zotero-library ID      Add to Zotero library
+  --arena-channel SLUG     Add to Are.na channel
+
+# Capture from live URL (Phase 5)
+webmap-archive capture <url> [options]
+  -o, --output PATH        Output archive path
+  --timeout SECONDS        Page load timeout
+  --wait-for-map SECONDS   Wait for map to initialize
+  --headed                 Show browser window
+
+# Start local processing service (Phase 4)
+webmap-archive serve [options]
+  --port PORT              Service port (default: 8080)
+  --cors                   Enable CORS for extension
+
+# Batch capture (Phase 5)
+webmap-archive batch <url_list.txt> [options]
+  -o, --output-dir PATH    Output directory
+  --parallel N             Concurrent captures
+  --resume                 Resume interrupted batch
+```
+
+---
+
+## New Module: Layer Inspector
+
+**File:** `tiles/layer_inspector.py`
+
+Added in Phase 1.5 to extract source-layer names directly from vector tile content via protobuf parsing:
+
+```python
+def extract_layer_names_protobuf(tile_content: bytes) -> list[TileLayerInfo]:
+    """
+    Parse MVT protobuf structure to extract layer names.
+    
+    MVT format:
+    - Field 3 = layer (repeated)
+    - Within layer: Field 1 = name (string)
+    """
+
+def discover_layers_from_tiles(tiles: list) -> dict[str, TileLayerInfo]:
+    """
+    Sample tiles across zoom levels to discover all unique layers.
+    Strategy: 3 tiles per zoom level, max 10 tiles total.
+    """
+
+def get_primary_layer_name(tiles: list) -> str | None:
+    """Get the most common layer name from sampled tiles."""
+```
+
+**Why this matters:** Source-layer names extracted from minified JavaScript were unreliable. The tile content itself is the source of truth—MVT files contain their layer names as part of the protobuf structure.
+
+---
+
+## Questions for Implementation
+
+1. Should the local processing service use FastAPI or Flask?
+2. What's the best approach for the browser extension manifest v3 vs v2?
+3. How should we handle maps that require authentication/login?
+4. Should capture bundles support streaming (for large tile sets)?
+5. How to handle maps with multiple distinct data layers (each with own styling)?
+
+---
+
+## Files in Current Implementation
+
+```
+webmap_archiver/
+├── __init__.py
+├── cli.py                    # Click CLI with create, inspect, capture-style-help
+├── har/
+│   ├── __init__.py
+│   ├── parser.py             # HAR file parsing
+│   └── classifier.py         # Request classification
+├── tiles/
+│   ├── __init__.py
+│   ├── detector.py           # Tile URL detection
+│   ├── coverage.py           # Geographic bounds calculation
+│   ├── pmtiles.py            # PMTiles building
+│   └── layer_inspector.py    # NEW: Protobuf-based layer extraction
+├── styles/
+│   ├── __init__.py
+│   └── extractor.py          # JS color/style extraction
+├── viewer/
+│   ├── __init__.py
+│   └── generator.py          # HTML viewer generation
+└── archive/
+    ├── __init__.py
+    └── packager.py           # ZIP assembly
+```
+
+---
+
+*End of Briefing*
