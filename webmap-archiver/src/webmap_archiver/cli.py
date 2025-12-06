@@ -39,7 +39,10 @@ def main():
 @click.option('-o', '--output', type=click.Path(path_type=Path), help='Output ZIP path')
 @click.option('-n', '--name', help='Archive name (default: derived from HAR filename)')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
-def create(har_file: Path, output: Path | None, name: str | None, verbose: bool):
+@click.option('--style-override', type=click.Path(exists=True, path_type=Path),
+              help='JSON file with complete MapLibre style (from map.getStyle())')
+def create(har_file: Path, output: Path | None, name: str | None, verbose: bool, 
+           style_override: Path | None):
     """Create an archive from a HAR file."""
 
     # Set defaults
@@ -154,13 +157,38 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool)
 
     console.print()
 
-    # Step 6: Extract styling from JavaScript files
+    # Step 6: Extract styling from JavaScript files (or use override)
     console.print("Extracting styling from JavaScript...")
 
     # Get all tile URLs for matching
     detected_urls = []
     for template, (source, tiles) in sources.items():
         detected_urls.append(source.url_template)
+
+    # Check if user provided a style override (from map.getStyle())
+    override_style = None
+    override_layers_by_source = {}  # source_id -> list of layer definitions
+    
+    if style_override:
+        console.print(f"  Loading style override from [cyan]{style_override}[/]")
+        try:
+            with open(style_override, 'r') as f:
+                override_style = json.load(f)
+            
+            # Extract layers grouped by source
+            if 'layers' in override_style:
+                for layer in override_style['layers']:
+                    source_id = layer.get('source')
+                    if source_id:
+                        if source_id not in override_layers_by_source:
+                            override_layers_by_source[source_id] = []
+                        override_layers_by_source[source_id].append(layer)
+            
+            console.print(f"  ✓ Loaded style with {len(override_style.get('layers', []))} layers")
+            console.print(f"  ✓ Sources in style: {list(override_style.get('sources', {}).keys())}")
+        except Exception as e:
+            console.print(f"  [red]✗ Failed to load style override: {e}[/]")
+            override_style = None
 
     style_report = extract_styles_from_har(entries, detected_urls)
 
@@ -223,10 +251,38 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool)
                     break
 
         # Build extracted style config
-        # PRIORITY: Use discovered layer names from tiles (reliable), 
-        # but use extracted colors from JS (styling)
+        # PRIORITY: 
+        # 1. Style override (from map.getStyle()) - 100% accurate
+        # 2. Discovered layer names from tiles (reliable for source-layer)
+        # 3. JS-extracted colors (may be incomplete)
         extracted_style_config = None
-        if extracted_style or source_layers or not is_basemap:
+        
+        # Check if we have override layers for this source
+        override_layers = None
+        if override_style:
+            # Try to match by source name
+            for override_source_id in override_layers_by_source.keys():
+                # Check if source names match (with some flexibility)
+                if (override_source_id.lower() in info.name.lower() or 
+                    info.name.lower() in override_source_id.lower() or
+                    any(part in override_source_id.lower() for part in info.name.lower().split('-') if len(part) > 2)):
+                    override_layers = override_layers_by_source[override_source_id]
+                    if verbose:
+                        console.print(f"  ✓ Found {len(override_layers)} override layers for {info.name} (matched {override_source_id})")
+                    break
+        
+        if override_layers:
+            # Use the complete layer definitions from override
+            # Pass them directly to the viewer for rendering
+            extracted_style_config = {
+                "sourceLayer": source_layers[0] if source_layers else None,
+                "allLayers": source_layers,
+                "colors": {},  # Colors are embedded in the override layers
+                "layerType": override_layers[0].get('type', 'line') if override_layers else 'line',
+                "confidence": 1.0,  # 100% confidence with override
+                "overrideLayers": override_layers  # Pass complete layer definitions
+            }
+        elif extracted_style or source_layers or not is_basemap:
             # Use discovered source-layer from tile inspection as primary source
             # Fall back to JS-extracted source-layer only if tile inspection failed
             primary_source_layer = None
@@ -386,6 +442,68 @@ def inspect(har_file: Path):
         console.print(f"  South: {bounds.south:.4f}°")
         console.print(f"  North: {bounds.north:.4f}°")
         console.print(f"  Center: ({bounds.center[0]:.4f}, {bounds.center[1]:.4f})")
+
+
+@main.command('capture-style-help')
+def capture_style_help():
+    """Show instructions for capturing map style from browser DevTools."""
+    
+    console.print()
+    console.print("[bold cyan]How to Capture Map Style Using Browser DevTools[/]")
+    console.print("=" * 60)
+    console.print()
+    console.print("The most accurate way to capture a web map's style is to extract")
+    console.print("it directly from the running map using the browser's DevTools.")
+    console.print()
+    console.print("[bold]Step 1:[/] Open the web map in your browser")
+    console.print()
+    console.print("[bold]Step 2:[/] Open DevTools (press F12 or Cmd+Option+I)")
+    console.print()
+    console.print("[bold]Step 3:[/] Go to the Console tab")
+    console.print()
+    console.print("[bold]Step 4:[/] Paste this script and press Enter:")
+    console.print()
+    console.print("[dim]─" * 60 + "[/]")
+    console.print("""[green]
+// Find the map instance and copy its style to clipboard
+(function() {
+    // Try common variable names for the map
+    const map = window.map || window._map || window.mapInstance ||
+                Object.values(window).find(v => v && v.getStyle && v.getCenter);
+    
+    if (!map) {
+        console.error('Could not find map instance. Try: Object.keys(window)');
+        return;
+    }
+    
+    if (!map.isStyleLoaded()) {
+        console.error('Map style not yet loaded. Wait and try again.');
+        return;
+    }
+    
+    const style = map.getStyle();
+    const output = JSON.stringify(style, null, 2);
+    
+    // Copy to clipboard
+    copy(output);
+    console.log('✓ Style copied to clipboard! (' + style.layers.length + ' layers)');
+    console.log('Save to a file and use with: --style-override style.json');
+})();
+[/]""")
+    console.print("[dim]─" * 60 + "[/]")
+    console.print()
+    console.print("[bold]Step 5:[/] Save the clipboard contents to a file (e.g., style.json)")
+    console.print()
+    console.print("[bold]Step 6:[/] Run webmap-archive with the style override:")
+    console.print()
+    console.print("  [cyan]webmap-archive create map.har --style-override style.json -o archive.zip[/]")
+    console.print()
+    console.print("[bold]Troubleshooting:[/]")
+    console.print("  • If 'map' is not found, the site may use a different variable name.")
+    console.print("  • Try typing 'map' in console to see if it exists.")
+    console.print("  • Look for MapLibre/Mapbox map instances in the page's global scope.")
+    console.print("  • Some sites wrap the map in a framework - you may need to dig deeper.")
+    console.print()
 
 
 if __name__ == '__main__':

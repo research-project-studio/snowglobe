@@ -158,8 +158,39 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         config.tileSources.forEach((src, i) => {{
             const isDataLayer = src.isOrphan !== false;
             const extracted = src.extractedStyle;
+            const layerIds = [];
 
-            // Determine colors to use
+            // Check if we have override layers (from map.getStyle())
+            // These are the exact layer definitions from the original map
+            if (extracted?.overrideLayers && extracted.overrideLayers.length > 0) {{
+                console.log("Using override layers for", src.name, ":", extracted.overrideLayers.length, "layers");
+                
+                extracted.overrideLayers.forEach((layerDef, idx) => {{
+                    // Clone the layer definition and update source reference
+                    const layer = JSON.parse(JSON.stringify(layerDef));
+                    layer.id = src.name + "-" + (layer.id || idx);
+                    layer.source = src.name;
+                    
+                    // Ensure source-layer is set correctly
+                    if (!layer["source-layer"] && extracted.sourceLayer) {{
+                        layer["source-layer"] = extracted.sourceLayer;
+                    }}
+                    
+                    style.layers.push(layer);
+                    layerIds.push(layer.id);
+                }});
+                
+                layerGroups[src.name] = {{
+                    label: src.name + " (original style)",
+                    layers: layerIds,
+                    isData: isDataLayer,
+                    hasExtractedStyle: true,
+                    sourceLayers: extracted.allLayers || []
+                }};
+                return; // Skip the default layer generation
+            }}
+
+            // Determine colors to use (for non-override case)
             let color;
             let colorExpr = null;
 
@@ -181,8 +212,6 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             if (sourceLayers.length === 0 && extracted?.sourceLayer) {{
                 sourceLayers = [extracted.sourceLayer];
             }}
-            
-            const layerIds = [];
             
             // If we have discovered source layers, create a layer for each
             // If not, create layers without source-layer (will try to render all)
