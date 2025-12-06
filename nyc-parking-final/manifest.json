@@ -1,7 +1,7 @@
 {
   "name": "NYC Parking Regulations",
   "description": "WebMap archive created from parkingregulations.nyc.har",
-  "created_at": "2025-12-06T01:03:55.613752",
+  "created_at": "2025-12-06T01:12:26.596494",
   "version": "1.0.0",
   "bounds": {
     "west": -74.53125,
@@ -68,14 +68,15 @@
         {
           "source_id": null,
           "source_layer": "parking_reg_sections_3fgb",
-          "layer_type": "symbol",
+          "layer_type": "line",
           "colors_extracted": 9,
           "confidence": 0.9,
           "notes": [
             "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
             "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
             "Found layer type: symbol",
-            "Extracted 9 color mappings"
+            "Extracted 9 color mappings",
+            "Corrected layer type to 'line' based on paint properties"
           ]
         }
       ]

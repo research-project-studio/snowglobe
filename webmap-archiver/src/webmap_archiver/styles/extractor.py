@@ -182,6 +182,9 @@ class StyleExtractor:
             if not style.colors:
                 self._extract_colors(js_content, style)
 
+            # Infer/correct layer type from paint properties
+            self._infer_layer_type_from_paint(style)
+
             # Calculate confidence
             style.extraction_confidence = self._calculate_confidence(style)
 
@@ -300,6 +303,25 @@ class StyleExtractor:
             score += min(0.2, len(style.paint_properties) * 0.05)
 
         return min(1.0, score)
+
+    def _infer_layer_type_from_paint(self, style: ExtractedLayerStyle) -> None:
+        """Infer or correct layer type from paint properties."""
+        # If we have paint properties, they can tell us the real layer type
+        if style.paint_properties:
+            has_line = any(k.startswith('line-') for k in style.paint_properties)
+            has_fill = any(k.startswith('fill-') for k in style.paint_properties)
+            has_circle = any(k.startswith('circle-') for k in style.paint_properties)
+
+            # Override extracted layer type if paint properties indicate otherwise
+            if has_line and style.layer_type == "symbol":
+                style.layer_type = "line"
+                style.extraction_notes.append("Corrected layer type to 'line' based on paint properties")
+            elif has_fill and style.layer_type not in ("fill", "line"):
+                style.layer_type = "fill"
+                style.extraction_notes.append("Corrected layer type to 'fill' based on paint properties")
+            elif has_circle and style.layer_type not in ("circle", "fill"):
+                style.layer_type = "circle"
+                style.extraction_notes.append("Corrected layer type to 'circle' based on paint properties")
 
 
 def extract_styles_from_har(

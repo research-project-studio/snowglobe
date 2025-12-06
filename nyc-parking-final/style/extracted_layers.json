@@ -28,14 +28,15 @@
         {
           "source_id": null,
           "source_layer": "parking_reg_sections_3fgb",
-          "layer_type": "symbol",
+          "layer_type": "line",
           "colors_extracted": 9,
           "confidence": 0.9,
           "notes": [
             "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
             "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
             "Found layer type: symbol",
-            "Extracted 9 color mappings"
+            "Extracted 9 color mappings",
+            "Corrected layer type to 'line' based on paint properties"
           ]
         }
       ]
@@ -46,7 +47,7 @@
       "source_id": null,
       "source_layer": "parking_reg_sections_3fgb",
       "tile_url": "https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
-      "layer_type": "symbol",
+      "layer_type": "line",
       "colors": {
         "vehicle": "#a432a8",
         "open": "#32a852",
@@ -66,7 +67,8 @@
         "Found tile URL: https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt",
         "Found source-layer: parking_reg_sections_3fgb (resolved from variable W)",
         "Found layer type: symbol",
-        "Extracted 9 color mappings"
+        "Extracted 9 color mappings",
+        "Corrected layer type to 'line' based on paint properties"
       ],
       "confidence": 0.9
     }
