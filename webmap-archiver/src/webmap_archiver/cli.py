@@ -4,14 +4,17 @@ Command-line interface for webmap-archiver.
 Commands:
 - create: Create archive from HAR file
 - inspect: Analyze HAR file without creating archive
+- capture-style-help: Show instructions for capturing map style
 """
 
 import click
 from pathlib import Path
 from datetime import datetime
 import json
+from enum import Enum
 from rich.console import Console
 from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
 import tempfile
 import shutil
 
@@ -24,8 +27,17 @@ from .tiles.layer_inspector import discover_layers_from_tiles, get_primary_layer
 from .styles.extractor import extract_styles_from_har
 from .viewer.generator import ViewerGenerator, ViewerConfig
 from .archive.packager import ArchivePackager, TileSourceInfo
+from .site.extractor import SiteExtractor
+from .resources.bundler import SpriteBundler, GlyphBundler, extract_all_resources
 
 console = Console()
+
+
+class ArchiveMode(str, Enum):
+    """Archive output modes."""
+    STANDALONE = "standalone"  # viewer.html + tiles only
+    ORIGINAL = "original"      # original site + tiles + serve.py
+    FULL = "full"              # both standalone and original
 
 
 @click.group()
@@ -41,9 +53,49 @@ def main():
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
 @click.option('--style-override', type=click.Path(exists=True, path_type=Path),
               help='JSON file with complete MapLibre style (from map.getStyle())')
+@click.option('--mode', type=click.Choice(['standalone', 'original', 'full']), default='full',
+              help='Archive mode: standalone (viewer only), original (site + serve.py), full (both)')
+@click.option('--expand-coverage', is_flag=True, 
+              help='Fetch missing tiles to fill gaps in coverage for all captured zoom levels')
+@click.option('--expand-zoom', type=int, default=0,
+              help='Expand coverage by N additional zoom levels (implies --expand-coverage)')
+@click.option('--rate-limit', type=float, default=10.0,
+              help='Rate limit for tile fetching (requests per second, default: 10)')
 def create(har_file: Path, output: Path | None, name: str | None, verbose: bool, 
-           style_override: Path | None):
-    """Create an archive from a HAR file."""
+           style_override: Path | None, mode: str, expand_coverage: bool, 
+           expand_zoom: int, rate_limit: float):
+    """Create an archive from a HAR file.
+    
+    Archive modes:
+    
+    \b
+    standalone - Minimal archive with viewer.html and PMTiles only.
+                 Self-contained, works by opening viewer.html directly.
+    
+    \b
+    original   - Full site preservation with original HTML/CSS/JS.
+                 Requires running serve.py to intercept tile requests.
+    
+    \b  
+    full       - Both standalone viewer and original site (default).
+                 Maximum flexibility for viewing the archive.
+    
+    Coverage expansion:
+    
+    \b
+    --expand-coverage   Fill gaps in the captured tile set for all zoom levels
+                        that were reached during the capture session. Ensures
+                        complete coverage of the session bounding box.
+    
+    \b
+    --expand-zoom N     Additionally expand coverage by N zoom levels beyond
+                        what was captured. Implies --expand-coverage.
+    """
+    archive_mode = ArchiveMode(mode)
+    
+    # --expand-zoom implies --expand-coverage
+    if expand_zoom > 0:
+        expand_coverage = True
 
     # Set defaults
     if output is None:
@@ -53,6 +105,7 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
 
     console.print(f"[bold]Creating archive from:[/] {har_file}")
     console.print(f"[bold]Output:[/] {output}")
+    console.print(f"[bold]Mode:[/] {archive_mode.value}")
     console.print()
 
     # Step 1: Parse HAR
@@ -102,23 +155,108 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
     console.print(f"  Zoom: {zoom_range[0]}-{zoom_range[1]}")
     console.print()
 
-    # Step 5: Build PMTiles for each source
+    # Step 5: Build PMTiles for each source (with optional coverage expansion)
     temp_dir = Path(tempfile.mkdtemp())
     pmtiles_files: list[tuple[str, Path, TileSourceInfo]] = []
     
     # Also store discovered layer names for each source
     discovered_layers: dict[str, list[str]] = {}
+    
+    # Track expansion results for manifest
+    expansion_results = {}
 
     for template, (source, tiles) in sources.items():
         console.print(f"Building PMTiles for [cyan]{source.name}[/]...")
-
+        
+        # Start with captured tiles
+        all_tiles = list(tiles)  # list of (coord, content)
+        
+        # Coverage expansion if requested
+        if expand_coverage:
+            try:
+                from .tiles.fetcher import analyze_coverage, expand_coverage as do_expand, AIOHTTP_AVAILABLE
+                
+                if not AIOHTTP_AVAILABLE:
+                    console.print("  [yellow]⚠ Coverage expansion requires aiohttp: pip install aiohttp[/]")
+                else:
+                    # Analyze current coverage
+                    report = analyze_coverage(tiles, bounds, expand_zoom)
+                    
+                    if report.total_missing > 0:
+                        console.print(f"  Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
+                        console.print(f"  Missing {report.total_missing} tiles across {len(report.zoom_levels)} zoom levels")
+                        
+                        if verbose:
+                            for z in report.zoom_levels:
+                                captured = report.tiles_by_zoom.get(z, 0)
+                                required = report.required_by_zoom.get(z, 0)
+                                missing = report.missing_by_zoom.get(z, 0)
+                                if missing > 0:
+                                    console.print(f"    z{z}: {captured}/{required} tiles ({missing} missing)")
+                        
+                        # Fetch missing tiles with progress
+                        from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+                        
+                        with Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                            TextColumn("({task.completed}/{task.total})"),
+                            TimeElapsedColumn(),
+                            console=console,
+                        ) as progress:
+                            task = progress.add_task(
+                                f"Fetching tiles for {source.name}...", 
+                                total=report.total_missing
+                            )
+                            
+                            def update_progress(src_name, completed, total):
+                                progress.update(task, completed=completed)
+                            
+                            result = do_expand(
+                                url_template=source.url_template,
+                                source_name=source.name,
+                                captured_tiles=tiles,
+                                bounds=bounds,
+                                expand_zoom=expand_zoom,
+                                rate_limit=rate_limit,
+                                progress_callback=update_progress
+                            )
+                        
+                        # Add fetched tiles
+                        if result.new_tiles:
+                            all_tiles.extend(result.new_tiles)
+                            console.print(f"  ✓ Fetched {result.fetched_count} additional tiles")
+                        
+                        if result.failed_count > 0:
+                            console.print(f"  [yellow]⚠ Failed to fetch {result.failed_count} tiles[/]")
+                        
+                        if result.auth_failures > 0:
+                            console.print(f"  [yellow]⚠ {result.auth_failures} tiles require authentication[/]")
+                        
+                        # Store for manifest
+                        expansion_results[source.name] = {
+                            "original_tiles": result.original_count,
+                            "fetched_tiles": result.fetched_count,
+                            "failed_tiles": result.failed_count,
+                            "auth_failures": result.auth_failures,
+                            "success_rate": result.success_rate
+                        }
+                    else:
+                        console.print(f"  ✓ Full coverage: {report.total_captured} tiles")
+                        
+            except ImportError as e:
+                console.print(f"  [yellow]⚠ Coverage expansion unavailable: {e}[/]")
+        
+        # Build PMTiles with all tiles (captured + expanded)
         pmtiles_path = temp_dir / f"{source.name}.pmtiles"
         builder = PMTilesBuilder(pmtiles_path)
 
-        for coord, content in tiles:
+        for coord, content in all_tiles:
             builder.add_tile(coord, content)
 
-        source_coords = [t[0] for t in tiles]
+        source_coords = [t[0] for t in all_tiles]
         source_bounds = coverage_calc.calculate_bounds(source_coords)
         source_zoom = coverage_calc.get_zoom_range(source_coords)
 
@@ -136,7 +274,7 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
         
         # Discover layer names from tile content (only for vector tiles)
         if source.tile_type == "vector":
-            layers = discover_layers_from_tiles(tiles)
+            layers = discover_layers_from_tiles(all_tiles)
             layer_names = list(layers.keys())
             discovered_layers[source.name] = layer_names
             if layer_names:
@@ -149,12 +287,83 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
             path=f"tiles/{source.name}.pmtiles",
             tile_type=source.tile_type,
             format=source.format,
-            tile_count=len(tiles),
+            tile_count=len(all_tiles),
             zoom_range=source_zoom,
         )
         pmtiles_files.append((source.name, pmtiles_path, info))
-        console.print(f"  ✓ Created {pmtiles_path.name}")
+        console.print(f"  ✓ Created {pmtiles_path.name} ({len(all_tiles)} tiles)")
 
+    console.print()
+
+    # Step 5b: Extract original site assets (if mode requires it)
+    extracted_assets = []
+    site_dir = None
+    
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL):
+        console.print("Extracting original site assets...")
+        
+        # Detect base URL from HAR
+        site_extractor = SiteExtractor()
+        base_url = site_extractor.get_base_url_from_entries(entries)
+        if base_url:
+            site_extractor = SiteExtractor(base_url=base_url)
+            console.print(f"  Base URL: [cyan]{base_url}[/]")
+        
+        # Create directory for extracted site
+        site_dir = temp_dir / "original"
+        site_dir.mkdir(exist_ok=True)
+        
+        # Extract assets
+        extracted_assets = site_extractor.extract_to_directory(entries, site_dir)
+        
+        if extracted_assets:
+            console.print(f"  ✓ Extracted [cyan]{len(extracted_assets)}[/] site assets")
+            
+            # Count by type
+            html_count = sum(1 for a in extracted_assets if a.mime_type == 'text/html')
+            css_count = sum(1 for a in extracted_assets if a.mime_type == 'text/css')
+            js_count = sum(1 for a in extracted_assets if 'javascript' in a.mime_type)
+            other_count = len(extracted_assets) - html_count - css_count - js_count
+            
+            if verbose:
+                console.print(f"    HTML: {html_count}, CSS: {css_count}, JS: {js_count}, Other: {other_count}")
+        else:
+            console.print("  [yellow]⚠ No site assets found to extract[/]")
+        
+        console.print()
+
+    # Step 5c: Extract map resources (sprites, glyphs)
+    console.print("Extracting map resources...")
+    
+    sprite_bundle, glyph_bundle = extract_all_resources(entries)
+    
+    resources_dir = temp_dir / "resources"
+    resources_dir.mkdir(exist_ok=True)
+    
+    sprite_path = None
+    if sprite_bundle.has_sprites:
+        sprites_dir = resources_dir / "sprites"
+        sprite_bundle.write_to_directory(sprites_dir)
+        sprite_path = "resources/sprites/sprite"
+        console.print(f"  ✓ Extracted sprites")
+        if verbose:
+            console.print(f"    1x: {'PNG+JSON' if sprite_bundle.png_1x and sprite_bundle.json_1x else 'partial'}")
+            console.print(f"    2x: {'PNG+JSON' if sprite_bundle.png_2x and sprite_bundle.json_2x else 'partial'}")
+    else:
+        console.print("  [dim]No sprites found in HAR[/]")
+    
+    glyphs_path = None
+    if glyph_bundle.has_glyphs:
+        glyphs_dir = resources_dir / "glyphs"
+        written = glyph_bundle.write_to_directory(glyphs_dir)
+        glyphs_path = "resources/glyphs/{fontstack}/{range}.pbf"
+        console.print(f"  ✓ Extracted glyphs for [cyan]{len(written)}[/] font stacks")
+        if verbose:
+            for font_stack, count in written.items():
+                console.print(f"    {font_stack}: {count} ranges")
+    else:
+        console.print("  [dim]No glyphs found in HAR[/]")
+    
     console.print()
 
     # Step 6: Extract styling from JavaScript files (or use override)
@@ -328,8 +537,6 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
     for name_, pmtiles_path, info in pmtiles_files:
         packager.add_pmtiles(name_, pmtiles_path)
 
-    packager.add_viewer(viewer_html)
-
     # Write extracted styles to a separate file for manual refinement
     extracted_styles_json = json.dumps({
         "extraction_report": style_report.to_manifest_section(),
@@ -350,6 +557,83 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
     }, indent=2)
     packager.temp_files.append(("style/extracted_layers.json", extracted_styles_json.encode('utf-8')))
 
+    # Add viewer HTML (for standalone and full modes)
+    if archive_mode in (ArchiveMode.STANDALONE, ArchiveMode.FULL):
+        packager.add_viewer(viewer_html)
+        console.print("  ✓ Added standalone viewer")
+
+    # Add original site files (for original and full modes)
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL) and site_dir and site_dir.exists():
+        # Add all files from the site directory
+        for file_path in site_dir.rglob('*'):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(temp_dir)
+                packager.temp_files.append((str(rel_path), file_path))
+        
+        console.print(f"  ✓ Added original site ({len(extracted_assets)} files)")
+        
+        # Add serve.py script
+        serve_py_template = Path(__file__).parent / "templates" / "serve.py"
+        if serve_py_template.exists():
+            packager.temp_files.append(("serve.py", serve_py_template))
+            console.print("  ✓ Added serve.py")
+        else:
+            console.print("  [yellow]⚠ serve.py template not found[/]")
+
+    # Add resources (sprites, glyphs)
+    if resources_dir.exists():
+        for file_path in resources_dir.rglob('*'):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(temp_dir)
+                packager.temp_files.append((str(rel_path), file_path))
+        
+        resource_count = sum(1 for _ in resources_dir.rglob('*') if _.is_file())
+        if resource_count > 0:
+            console.print(f"  ✓ Added map resources ({resource_count} files)")
+
+    # Prepare manifest with additional metadata
+    original_site_info = None
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL) and extracted_assets:
+        original_site_info = {
+            "available": True,
+            "entry_point": "original/index.html",
+            "file_count": len(extracted_assets),
+            "total_size_bytes": sum(len(a.content) for a in extracted_assets)
+        }
+
+    resources_info = {}
+    if sprite_bundle.has_sprites:
+        resources_info["sprites"] = {
+            "available": True,
+            "path": sprite_path
+        }
+    if glyph_bundle.has_glyphs:
+        resources_info["glyphs"] = {
+            "available": True,
+            "path": glyphs_path,
+            "font_stacks": glyph_bundle.font_stacks
+        }
+
+    # Get original tile URLs for manifest (needed by serve.py)
+    tile_source_manifest = []
+    for _, _, info in pmtiles_files:
+        # Find the original URL template
+        original_url = None
+        for template, (source, tiles) in sources.items():
+            if source.name == info.name:
+                original_url = source.url_template
+                break
+        
+        tile_source_manifest.append({
+            "name": info.name,
+            "path": info.path,
+            "tile_type": info.tile_type,
+            "format": info.format,
+            "tile_count": info.tile_count,
+            "zoom_range": list(info.zoom_range),
+            "original_url": original_url
+        })
+
     packager.set_manifest(
         name=name,
         description=f"WebMap archive created from {har_file.name}",
@@ -358,6 +642,14 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
         tile_sources=[info for _, _, info in pmtiles_files],
         style_extraction=style_report.to_manifest_section()
     )
+    
+    # Enhance manifest with additional info
+    packager.manifest.archive_mode = archive_mode.value
+    packager.manifest.tile_sources = tile_source_manifest
+    if original_site_info:
+        packager.manifest.to_dict()  # Ensure it's built
+    if resources_info:
+        pass  # Will add resources to manifest in future update
 
     packager.build()
 
@@ -367,6 +659,23 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
     console.print()
     console.print(f"[bold green]✓ Archive created:[/] {output}")
     console.print(f"  Size: {output.stat().st_size / 1024 / 1024:.2f} MB")
+    console.print(f"  Mode: {archive_mode.value}")
+    console.print()
+    
+    # Show usage instructions based on mode
+    if archive_mode == ArchiveMode.STANDALONE:
+        console.print("[bold]To view:[/]")
+        console.print("  1. Extract the ZIP file")
+        console.print("  2. Open viewer.html in a browser")
+    elif archive_mode == ArchiveMode.ORIGINAL:
+        console.print("[bold]To view:[/]")
+        console.print("  1. Extract the ZIP file")
+        console.print("  2. Run: python serve.py")
+        console.print("  3. Open http://localhost:8080 in a browser")
+    else:  # FULL
+        console.print("[bold]To view:[/]")
+        console.print("  Option A (standalone): Extract ZIP and open viewer.html")
+        console.print("  Option B (original site): Extract ZIP and run: python serve.py")
 
 
 @main.command()
