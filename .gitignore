@@ -2,3 +2,4 @@
 /.history
 **/*.pyc
 *.zip
+**/node_modules/
