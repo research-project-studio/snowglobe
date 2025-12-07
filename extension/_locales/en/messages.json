@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "WebMap Archiver",
+    "description": "Name of the extension"
+  },
+  "extDescription": {
+    "message": "Capture web maps for offline archiving",
+    "description": "Description of the extension"
+  }
+}

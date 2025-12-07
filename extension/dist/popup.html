@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <img src="icons/icon-48.png" alt="WebMap Archiver" class="logo">
+      <h1>WebMap Archiver</h1>
+    </header>
+
+    <!-- State: No map detected -->
+    <div id="no-map" class="state">
+      <p class="icon">🗺️</p>
+      <p>No web map detected on this page.</p>
+      <p class="hint">Navigate to a page with a MapLibre, Mapbox, or Leaflet map.</p>
+    </div>
+
+    <!-- State: Map found, ready to capture -->
+    <div id="map-found" class="state hidden">
+      <p class="icon">✓</p>
+      <p id="map-info">Map detected!</p>
+
+      <div class="actions">
+        <button id="start-capture-btn" class="primary">
+          🔴 Start Capture
+        </button>
+      </div>
+
+      <p class="hint">Click to begin recording. Pan and zoom to capture the areas you need.</p>
+    </div>
+
+    <!-- State: Recording in progress -->
+    <div id="recording" class="state hidden">
+      <p class="icon recording-icon">🔴</p>
+      <p class="recording-label">Recording...</p>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-value" id="tile-count">0</span>
+          <span class="stat-label">tiles</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="zoom-levels">-</span>
+          <span class="stat-label">zoom levels</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="data-size">0 KB</span>
+          <span class="stat-label">data</span>
+        </div>
+      </div>
+
+      <p class="hint">Pan and zoom the map to capture areas you need.</p>
+
+      <div class="actions">
+        <button id="stop-capture-btn" class="primary">
+          ⏹ Stop & Archive
+        </button>
+        <button id="cancel-capture-btn" class="secondary">
+          ✖ Cancel
+        </button>
+      </div>
+    </div>
+
+    <!-- State: Processing -->
+    <div id="processing" class="state hidden">
+      <p class="icon">⏳</p>
+      <p id="processing-message">Processing...</p>
+
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <p class="progress-text" id="progress-text">Uploading to cloud...</p>
+    </div>
+
+    <!-- State: Complete -->
+    <div id="complete" class="state hidden">
+      <p class="icon">✅</p>
+      <p>Archive complete!</p>
+      <p class="filename" id="filename"></p>
+      <p class="stats-summary" id="stats-summary"></p>
+
+      <div class="actions">
+        <button id="new-capture-btn" class="secondary">
+          📸 New Capture
+        </button>
+      </div>
+    </div>
+
+    <!-- State: Error -->
+    <div id="error" class="state hidden">
+      <p class="icon">❌</p>
+      <p id="error-message">An error occurred.</p>
+      <button id="retry-btn" class="secondary">Try Again</button>
+    </div>
+
+    <footer>
+      <a href="https://github.com/anthropics/webmap-archiver" target="_blank">Help</a>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

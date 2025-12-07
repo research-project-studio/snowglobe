@@ -1,0 +1,1 @@
+(()=>{"use strict";chrome.devtools.panels.create("WebMap Archiver","icons/icon-16.png","panel.html",e=>{})})();

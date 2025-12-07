@@ -1,0 +1,1 @@
+(()=>{"use strict";console.log("WebMap Archiver DevTools panel loaded")})();
