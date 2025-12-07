@@ -37,14 +37,21 @@ class HAREntry:
 class HARParser:
     """Parse HAR files and extract entries with content."""
 
-    def __init__(self, har_path: Path):
-        self.har_path = Path(har_path)
+    def __init__(self, har_path: Path | None):
+        self.har_path = Path(har_path) if har_path else None
 
     def parse(self) -> list[HAREntry]:
         """Parse HAR file and return all entries."""
+        if not self.har_path:
+            raise ValueError("No HAR path provided")
+
         with open(self.har_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
+        return self.parse_har_data(data)
+
+    def parse_har_data(self, data: dict) -> list[HAREntry]:
+        """Parse HAR data from a dictionary."""
         entries = []
         for entry in data['log']['entries']:
             parsed = self._parse_entry(entry)

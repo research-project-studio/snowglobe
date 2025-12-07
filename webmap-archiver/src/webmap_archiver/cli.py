@@ -29,6 +29,8 @@ from .viewer.generator import ViewerGenerator, ViewerConfig
 from .archive.packager import ArchivePackager, TileSourceInfo
 from .site.extractor import SiteExtractor
 from .resources.bundler import SpriteBundler, GlyphBundler, extract_all_resources
+from .capture.parser import CaptureParser, validate_capture_bundle
+from .capture.processor import process_capture_bundle
 
 console = Console()
 
@@ -38,6 +40,393 @@ class ArchiveMode(str, Enum):
     STANDALONE = "standalone"  # viewer.html + tiles only
     ORIGINAL = "original"      # original site + tiles + serve.py
     FULL = "full"              # both standalone and original
+
+
+def build_archive_from_tiles(
+    tile_sources: dict[str, any],  # source_name -> TileSource
+    tiles_by_source: dict[str, list[tuple[any, bytes]]],  # source_name -> [(coord, content)]
+    bounds: any,  # GeoBounds
+    zoom_range: tuple[int, int],
+    output_path: Path,
+    archive_name: str,
+    archive_mode: ArchiveMode,
+    override_style: dict | None = None,
+    har_entries: list | None = None,
+    capture_metadata: dict | None = None,
+    verbose: bool = False,
+) -> None:
+    """
+    Build an archive from processed tile data.
+
+    Shared between `create` (from HAR) and `process` (from capture bundle).
+    """
+    temp_dir = Path(tempfile.mkdtemp())
+    pmtiles_files: list[tuple[str, Path, TileSourceInfo]] = []
+    discovered_layers: dict[str, list[str]] = {}
+
+    coverage_calc = CoverageCalculator()
+
+    # Step 1: Build PMTiles for each source
+    for source_name, source in tile_sources.items():
+        tiles = tiles_by_source.get(source_name, [])
+        if not tiles:
+            continue
+
+        console.print(f"Building PMTiles for [cyan]{source_name}[/]...")
+
+        pmtiles_path = temp_dir / f"{source_name}.pmtiles"
+        builder = PMTilesBuilder(pmtiles_path)
+
+        for coord, content in tiles:
+            builder.add_tile(coord, content)
+
+        coords = [t[0] for t in tiles]
+        source_bounds = coverage_calc.calculate_bounds(coords)
+        source_zoom = coverage_calc.get_zoom_range(coords)
+
+        builder.set_metadata(PMTilesMetadata(
+            name=source_name,
+            description=f"Tiles from {source.url_template}",
+            bounds=source_bounds,
+            min_zoom=source_zoom[0],
+            max_zoom=source_zoom[1],
+            tile_type=source.tile_type,
+            format=source.format,
+        ))
+
+        builder.build()
+
+        # Discover layer names from tile content (only for vector tiles)
+        if source.tile_type == "vector":
+            layers = discover_layers_from_tiles(tiles)
+            layer_names = list(layers.keys())
+            discovered_layers[source_name] = layer_names
+            if layer_names:
+                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
+
+        info = TileSourceInfo(
+            name=source_name,
+            path=f"tiles/{source_name}.pmtiles",
+            tile_type=source.tile_type,
+            format=source.format,
+            tile_count=len(tiles),
+            zoom_range=source_zoom,
+        )
+        pmtiles_files.append((source_name, pmtiles_path, info))
+        console.print(f"  ✓ Created {pmtiles_path.name} ({len(tiles)} tiles)")
+
+    console.print()
+
+    # Step 2: Extract original site assets (if mode requires it)
+    extracted_assets = []
+    site_dir = None
+
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL) and har_entries:
+        console.print("Extracting original site assets...")
+
+        # Detect base URL from HAR
+        site_extractor = SiteExtractor()
+        base_url = site_extractor.get_base_url_from_entries(har_entries)
+        if base_url:
+            site_extractor = SiteExtractor(base_url=base_url)
+            console.print(f"  Base URL: [cyan]{base_url}[/]")
+
+        # Create directory for extracted site
+        site_dir = temp_dir / "original"
+        site_dir.mkdir(exist_ok=True)
+
+        # Extract assets
+        extracted_assets = site_extractor.extract_to_directory(har_entries, site_dir)
+
+        if extracted_assets:
+            console.print(f"  ✓ Extracted [cyan]{len(extracted_assets)}[/] site assets")
+
+            if verbose:
+                html_count = sum(1 for a in extracted_assets if a.mime_type == 'text/html')
+                css_count = sum(1 for a in extracted_assets if a.mime_type == 'text/css')
+                js_count = sum(1 for a in extracted_assets if 'javascript' in a.mime_type)
+                other_count = len(extracted_assets) - html_count - css_count - js_count
+                console.print(f"    HTML: {html_count}, CSS: {css_count}, JS: {js_count}, Other: {other_count}")
+        else:
+            console.print("  [yellow]⚠ No site assets found to extract[/]")
+
+        console.print()
+
+    # Step 3: Extract map resources (sprites, glyphs) from HAR if available
+    resources_dir = temp_dir / "resources"
+    resources_dir.mkdir(exist_ok=True)
+
+    sprite_path = None
+    glyphs_path = None
+
+    if har_entries:
+        console.print("Extracting map resources...")
+
+        sprite_bundle, glyph_bundle = extract_all_resources(har_entries)
+
+        if sprite_bundle.has_sprites:
+            sprites_dir = resources_dir / "sprites"
+            sprite_bundle.write_to_directory(sprites_dir)
+            sprite_path = "resources/sprites/sprite"
+            console.print(f"  ✓ Extracted sprites")
+            if verbose:
+                console.print(f"    1x: {'PNG+JSON' if sprite_bundle.png_1x and sprite_bundle.json_1x else 'partial'}")
+                console.print(f"    2x: {'PNG+JSON' if sprite_bundle.png_2x and sprite_bundle.json_2x else 'partial'}")
+        else:
+            console.print("  [dim]No sprites found in HAR[/]")
+
+        if glyph_bundle.has_glyphs:
+            glyphs_dir = resources_dir / "glyphs"
+            written = glyph_bundle.write_to_directory(glyphs_dir)
+            glyphs_path = "resources/glyphs/{fontstack}/{range}.pbf"
+            console.print(f"  ✓ Extracted glyphs for [cyan]{len(written)}[/] font stacks")
+            if verbose:
+                for font_stack, count in written.items():
+                    console.print(f"    {font_stack}: {count} ranges")
+        else:
+            console.print("  [dim]No glyphs found in HAR[/]")
+
+        console.print()
+
+    # Step 4: Handle style (override or extracted)
+    override_layers_by_source = {}
+    extracted_style_report = None
+
+    if override_style:
+        console.print("Using provided style...")
+        # Extract layers grouped by source
+        if 'layers' in override_style:
+            for layer in override_style['layers']:
+                source_id = layer.get('source')
+                if source_id:
+                    if source_id not in override_layers_by_source:
+                        override_layers_by_source[source_id] = []
+                    override_layers_by_source[source_id].append(layer)
+
+        console.print(f"  ✓ Loaded style with {len(override_style.get('layers', []))} layers")
+        console.print(f"  ✓ Sources in style: {list(override_style.get('sources', {}).keys())}")
+        console.print()
+    elif har_entries:
+        console.print("Extracting styling from JavaScript...")
+
+        # Get all tile URLs for matching
+        detected_urls = [source.url_template for source in tile_sources.values()]
+
+        extracted_style_report = extract_styles_from_har(har_entries, detected_urls)
+
+        if extracted_style_report.extracted_layers:
+            console.print(f"  ✓ Extracted styling for [cyan]{len(extracted_style_report.extracted_layers)}[/] layers")
+            if verbose:
+                for layer in extracted_style_report.extracted_layers:
+                    console.print(f"    • {layer.source_layer or 'unknown'}: {len(layer.colors)} colors, confidence: {layer.extraction_confidence:.0%}")
+        else:
+            console.print("  [yellow]⚠ No data layer styling could be extracted from JavaScript[/]")
+
+        console.print()
+
+    # Step 5: Generate viewer
+    console.print("Generating viewer...")
+    viewer_gen = ViewerGenerator()
+
+    BASEMAP_DOMAINS = ['maptiler', 'mapbox', 'esri', 'osm']
+
+    tile_source_configs = []
+    for _, _, info in pmtiles_files:
+        # Detect if this is likely a basemap vs data layer
+        is_basemap = any(domain in info.name.lower() for domain in BASEMAP_DOMAINS)
+
+        # Get discovered layer names for this source
+        source_layers = discovered_layers.get(info.name, [])
+
+        # Build extracted style config
+        extracted_style_config = None
+
+        # Check if we have override layers for this source
+        override_layers = None
+        if override_layers_by_source:
+            for override_source_id in override_layers_by_source.keys():
+                if (override_source_id.lower() in info.name.lower() or
+                    info.name.lower() in override_source_id.lower() or
+                    any(part in override_source_id.lower() for part in info.name.lower().split('-') if len(part) > 2)):
+                    override_layers = override_layers_by_source[override_source_id]
+                    if verbose:
+                        console.print(f"  ✓ Found {len(override_layers)} override layers for {info.name}")
+                    break
+
+        if override_layers:
+            extracted_style_config = {
+                "sourceLayer": source_layers[0] if source_layers else None,
+                "allLayers": source_layers,
+                "colors": {},
+                "layerType": override_layers[0].get('type', 'line') if override_layers else 'line',
+                "confidence": 1.0,
+                "overrideLayers": override_layers
+            }
+        elif extracted_style_report or source_layers or not is_basemap:
+            # Find extracted styling for this source
+            extracted_style = None
+            if extracted_style_report:
+                for layer in extracted_style_report.extracted_layers:
+                    if layer.tile_url:
+                        source_parts = info.name.lower().replace('-', ' ').replace('_', ' ').replace('.', ' ').split()
+                        url_lower = layer.tile_url.lower()
+                        skip_parts = {'pbf', 'mvt', 'tiles', 'api', 'v1', 'v2', 'v3', 'v4'}
+                        identifying_parts = [p for p in source_parts if p not in skip_parts and len(p) > 2]
+                        matches = sum(1 for part in identifying_parts if part in url_lower)
+                        match_ratio = matches / len(identifying_parts) if identifying_parts else 0
+                        if match_ratio >= 0.5:
+                            extracted_style = layer
+                            break
+
+            primary_source_layer = None
+            if source_layers:
+                primary_source_layer = source_layers[0]
+            elif extracted_style and extracted_style.source_layer:
+                primary_source_layer = extracted_style.source_layer
+
+            extracted_style_config = {
+                "sourceLayer": primary_source_layer,
+                "allLayers": source_layers,
+                "colors": extracted_style.colors if extracted_style else {},
+                "layerType": extracted_style.layer_type if extracted_style else "line",
+                "confidence": extracted_style.extraction_confidence if extracted_style else 0.0
+            }
+
+        tile_source_configs.append({
+            "name": info.name,
+            "path": info.path,
+            "type": info.tile_type,
+            "isOrphan": not is_basemap,
+            "extractedStyle": extracted_style_config
+        })
+
+    viewer_config = ViewerConfig(
+        name=archive_name,
+        bounds=bounds,
+        min_zoom=zoom_range[0],
+        max_zoom=zoom_range[1],
+        tile_sources=tile_source_configs,
+        created_at=datetime.now().strftime("%Y-%m-%d"),
+    )
+    viewer_html = viewer_gen.generate(viewer_config)
+
+    # Step 6: Package archive
+    console.print("Packaging archive...")
+    packager = ArchivePackager(output_path)
+
+    for name_, pmtiles_path, info in pmtiles_files:
+        packager.add_pmtiles(name_, pmtiles_path)
+
+    # Write extracted styles if available
+    if extracted_style_report:
+        extracted_styles_json = json.dumps({
+            "extraction_report": extracted_style_report.to_manifest_section(),
+            "layers": [
+                {
+                    "source_id": layer.source_id,
+                    "source_layer": layer.source_layer,
+                    "tile_url": layer.tile_url,
+                    "layer_type": layer.layer_type,
+                    "colors": layer.colors,
+                    "paint_properties": layer.paint_properties,
+                    "extraction_notes": layer.extraction_notes,
+                    "confidence": layer.extraction_confidence
+                }
+                for layer in extracted_style_report.extracted_layers
+            ],
+            "_comment": "This file documents extracted styling. Edit to refine layer appearance."
+        }, indent=2)
+        packager.temp_files.append(("style/extracted_layers.json", extracted_styles_json.encode('utf-8')))
+
+    # Add viewer HTML (for standalone and full modes)
+    if archive_mode in (ArchiveMode.STANDALONE, ArchiveMode.FULL):
+        packager.add_viewer(viewer_html)
+        console.print("  ✓ Added standalone viewer")
+
+    # Add original site files (for original and full modes)
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL) and site_dir and site_dir.exists():
+        for file_path in site_dir.rglob('*'):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(temp_dir)
+                packager.temp_files.append((str(rel_path), file_path))
+
+        console.print(f"  ✓ Added original site ({len(extracted_assets)} files)")
+
+        # Add serve.py script
+        serve_py_template = Path(__file__).parent / "templates" / "serve.py"
+        if serve_py_template.exists():
+            packager.temp_files.append(("serve.py", serve_py_template))
+            console.print("  ✓ Added serve.py")
+        else:
+            console.print("  [yellow]⚠ serve.py template not found[/]")
+
+    # Add resources (sprites, glyphs)
+    if resources_dir.exists():
+        for file_path in resources_dir.rglob('*'):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(temp_dir)
+                packager.temp_files.append((str(rel_path), file_path))
+
+        resource_count = sum(1 for _ in resources_dir.rglob('*') if _.is_file())
+        if resource_count > 0:
+            console.print(f"  ✓ Added map resources ({resource_count} files)")
+
+    # Add captured style if provided
+    if override_style:
+        style_json = json.dumps(override_style, indent=2)
+        packager.temp_files.append(("style/captured_style.json", style_json.encode('utf-8')))
+        console.print("  ✓ Added captured style")
+
+    # Prepare manifest
+    original_site_info = None
+    if archive_mode in (ArchiveMode.ORIGINAL, ArchiveMode.FULL) and extracted_assets:
+        original_site_info = {
+            "available": True,
+            "entry_point": "original/index.html",
+            "file_count": len(extracted_assets),
+            "total_size_bytes": sum(len(a.content) for a in extracted_assets)
+        }
+
+    # Get original tile URLs for manifest
+    tile_source_manifest = []
+    for _, _, info in pmtiles_files:
+        original_url = tile_sources.get(info.name).url_template if info.name in tile_sources else None
+
+        tile_source_manifest.append({
+            "name": info.name,
+            "path": info.path,
+            "tile_type": info.tile_type,
+            "format": info.format,
+            "tile_count": info.tile_count,
+            "zoom_range": list(info.zoom_range),
+            "original_url": original_url
+        })
+
+    packager.set_manifest(
+        name=archive_name,
+        description=f"WebMap archive",
+        bounds=bounds,
+        zoom_range=zoom_range,
+        tile_sources=[info for _, _, info in pmtiles_files],
+        style_extraction=extracted_style_report.to_manifest_section() if extracted_style_report else None
+    )
+
+    packager.manifest.archive_mode = archive_mode.value
+    packager.manifest.tile_sources = tile_source_manifest
+
+    if capture_metadata:
+        packager.manifest.capture_metadata = capture_metadata
+
+    packager.build()
+
+    # Cleanup
+    shutil.rmtree(temp_dir)
+
+    console.print()
+    console.print(f"[bold green]✓ Archive created:[/] {output_path}")
+    console.print(f"  Size: {output_path.stat().st_size / 1024 / 1024:.2f} MB")
+    console.print(f"  Mode: {archive_mode.value}")
+    console.print()
 
 
 @click.group()
@@ -663,6 +1052,143 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
     console.print()
     
     # Show usage instructions based on mode
+    if archive_mode == ArchiveMode.STANDALONE:
+        console.print("[bold]To view:[/]")
+        console.print("  1. Extract the ZIP file")
+        console.print("  2. Open viewer.html in a browser")
+    elif archive_mode == ArchiveMode.ORIGINAL:
+        console.print("[bold]To view:[/]")
+        console.print("  1. Extract the ZIP file")
+        console.print("  2. Run: python serve.py")
+        console.print("  3. Open http://localhost:8080 in a browser")
+    else:  # FULL
+        console.print("[bold]To view:[/]")
+        console.print("  Option A (standalone): Extract ZIP and open viewer.html")
+        console.print("  Option B (original site): Extract ZIP and run: python serve.py")
+
+
+@main.command()
+@click.argument('capture_file', type=click.Path(exists=True, path_type=Path))
+@click.option('-o', '--output', type=click.Path(path_type=Path), help='Output ZIP path')
+@click.option('-n', '--name', help='Archive name (default: derived from metadata)')
+@click.option('-v', '--verbose', is_flag=True, help='Verbose output')
+@click.option('--mode', type=click.Choice(['standalone', 'original', 'full']), default='standalone',
+              help='Archive mode (default: standalone)')
+def process(capture_file: Path, output: Path | None, name: str | None, verbose: bool, mode: str):
+    """Create an archive from a capture bundle.
+
+    Capture bundles are richer than HAR files and can contain:
+    - Pre-extracted tiles and resources
+    - Runtime map style from map.getStyle()
+    - Viewport state and metadata
+
+    Supports multiple formats:
+    - JSON: .webmap.json, .webmap-capture.json
+    - Gzipped JSON: .webmap.json.gz
+    - Directory bundle: folder with manifest.json
+    - NDJSON stream: .webmap.ndjson
+    """
+    archive_mode = ArchiveMode(mode)
+
+    console.print(f"[bold]Processing capture bundle:[/] {capture_file}")
+    console.print(f"[bold]Mode:[/] {archive_mode.value}")
+    console.print()
+
+    # Step 1: Parse capture bundle
+    with console.status("Parsing capture bundle..."):
+        try:
+            parser = CaptureParser()
+            bundle = parser.parse(capture_file)
+        except Exception as e:
+            console.print(f"[red]✗ Failed to parse capture bundle: {e}[/]")
+            raise click.Abort()
+
+    console.print(f"  ✓ Parsed capture bundle (version {bundle.version})")
+    console.print(f"  Source: [cyan]{bundle.metadata.url}[/]")
+    console.print(f"  Title: {bundle.metadata.title or '(untitled)'}")
+    console.print(f"  Captured: {bundle.metadata.captured_at}")
+    if bundle.metadata.map_library_type:
+        console.print(f"  Map library: {bundle.metadata.map_library_type} {bundle.metadata.map_library_version or ''}")
+    console.print(f"  Viewport: {bundle.viewport.center} @ z{bundle.viewport.zoom}")
+    console.print(f"  Tiles: {len(bundle.tiles)}")
+    console.print(f"  Resources: {len(bundle.resources)}")
+    console.print(f"  Has style: {'✓' if bundle.style else '✗'}")
+    console.print(f"  Has HAR: {'✓' if bundle.har else '✗'}")
+    console.print()
+
+    # Step 2: Validate bundle
+    with console.status("Validating bundle..."):
+        warnings = validate_capture_bundle(bundle)
+
+    if warnings:
+        console.print("[yellow]Warnings:[/]")
+        for warning in warnings:
+            console.print(f"  ⚠ {warning}")
+        console.print()
+
+    # Step 3: Process bundle into intermediate form
+    with console.status("Processing bundle..."):
+        processed = process_capture_bundle(bundle)
+
+    console.print(f"  ✓ Processed capture")
+    console.print(f"  Tile sources: [cyan]{len(processed.tile_sources)}[/]")
+    for source_id, source in processed.tile_sources.items():
+        tile_count = len(processed.tiles_by_source.get(source_id, []))
+        console.print(f"    • {source.name}: {tile_count} tiles ({source.tile_type})")
+    console.print()
+
+    # Set defaults
+    if output is None:
+        if capture_file.is_dir():
+            output = capture_file.with_suffix('.zip')
+        else:
+            # Remove .webmap.json, .webmap-capture.json, etc.
+            stem = capture_file.stem
+            for suffix in ['.webmap', '.webmap-capture']:
+                if stem.endswith(suffix):
+                    stem = stem[:-len(suffix)]
+                    break
+            output = capture_file.parent / f"{stem}.zip"
+
+    if name is None:
+        name = processed.title
+
+    console.print(f"[bold]Output:[/] {output}")
+    console.print()
+
+    # Calculate zoom range
+    all_coords = [coord for tiles in processed.tiles_by_source.values() for coord, _ in tiles]
+    coverage_calc = CoverageCalculator()
+    zoom_range = coverage_calc.get_zoom_range(all_coords) if all_coords else (0, 14)
+
+    # Prepare capture metadata for manifest
+    capture_metadata = {
+        "source_url": processed.source_url,
+        "captured_at": processed.captured_at,
+        "viewport": {
+            "center": bundle.viewport.center,
+            "zoom": bundle.viewport.zoom,
+            "bearing": bundle.viewport.bearing,
+            "pitch": bundle.viewport.pitch
+        }
+    }
+
+    # Step 4: Use shared archive builder
+    build_archive_from_tiles(
+        tile_sources=processed.tile_sources,
+        tiles_by_source=processed.tiles_by_source,
+        bounds=processed.bounds,
+        zoom_range=zoom_range,
+        output_path=output,
+        archive_name=name,
+        archive_mode=archive_mode,
+        override_style=bundle.style,
+        har_entries=processed.har_entries,
+        capture_metadata=capture_metadata,
+        verbose=verbose
+    )
+
+    # Show usage instructions
     if archive_mode == ArchiveMode.STANDALONE:
         console.print("[bold]To view:[/]")
         console.print("  1. Extract the ZIP file")
