@@ -6,8 +6,7 @@
 
 export const CONFIG = {
   // Modal cloud endpoint (primary)
-  // Replace YOUR_USERNAME with your Modal username after deployment
-  cloudEndpoint: "https://YOUR_USERNAME--webmap-archiver-process.modal.run",
+  cloudEndpoint: "https://mariogiampieri--webmap-archiver-fastapi-app.modal.run/process",
 
   // Local development endpoint (modal serve)
   localDevEndpoint: "http://localhost:8000",
