@@ -10,7 +10,12 @@
  */
 
 import { CaptureBundle, HARLog, HAREntry } from "../types/capture-bundle";
-import { CONFIG, getProcessingEndpoints, CaptureState, CapturedRequest } from "../config";
+import {
+  CONFIG,
+  getProcessingEndpoints,
+  CaptureState,
+  CapturedRequest,
+} from "../config";
 
 // Track detected maps per tab
 const tabMapState = new Map<number, { count: number; types: string[] }>();
@@ -23,6 +28,38 @@ const tabCapturedRequests = new Map<number, CapturedRequest[]>();
 
 // Track pending response bodies (debugger returns body separately)
 const pendingBodies = new Map<string, { tabId: number; requestId: string }>();
+
+// Track whether debugger listener has been set up
+let debuggerListenerAttached = false;
+
+/**
+ * Set up debugger event listener if debugger API is available.
+ * This is called lazily when needed, since debugger is an optional permission.
+ */
+function ensureDebuggerListener(): void {
+  if (debuggerListenerAttached) return;
+  if (typeof chrome.debugger === "undefined") return;
+
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    const tabId = source.tabId;
+    if (!tabId) return;
+
+    const state = tabCaptureState.get(tabId);
+    if (!state || state.status !== "recording") return;
+
+    switch (method) {
+      case "Network.responseReceived":
+        handleResponseReceived(tabId, params as NetworkResponseParams);
+        break;
+      case "Network.loadingFinished":
+        handleLoadingFinished(tabId, params as NetworkLoadingFinishedParams);
+        break;
+    }
+  });
+
+  debuggerListenerAttached = true;
+  console.log("[WebMap Archiver] Debugger event listener attached");
+}
 
 /**
  * Handle messages from content scripts and popup.
@@ -40,7 +77,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "GET_TAB_STATE":
       if (message.tabId) {
         const mapState = tabMapState.get(message.tabId);
-        const captureState = tabCaptureState.get(message.tabId) || { status: "idle" };
+        const captureState = tabCaptureState.get(message.tabId) || {
+          status: "idle",
+        };
         sendResponse({
           maps: mapState || { count: 0, types: [] },
           capture: captureState,
@@ -104,7 +143,10 @@ function updateBadgeForMapDetection(tabId: number, count: number): void {
   if (count > 0) {
     chrome.action.setBadgeText({ text: count.toString(), tabId });
     chrome.action.setBadgeBackgroundColor({ color: "#4CAF50", tabId });
-    chrome.action.setTitle({ title: `WebMap Archiver (${count} map${count > 1 ? "s" : ""} detected)`, tabId });
+    chrome.action.setTitle({
+      title: `WebMap Archiver (${count} map${count > 1 ? "s" : ""} detected)`,
+      tabId,
+    });
   } else {
     chrome.action.setBadgeText({ text: "", tabId });
     chrome.action.setTitle({ title: "WebMap Archiver", tabId });
@@ -118,7 +160,9 @@ function updateBadgeForMapDetection(tabId: number, count: number): void {
 /**
  * Start recording network traffic for a tab.
  */
-async function startCapture(tabId: number): Promise<{ success: boolean; error?: string }> {
+async function startCapture(
+  tabId: number
+): Promise<{ success: boolean; error?: string }> {
   try {
     // Check if debugger permission is granted
     const hasPermission = await chrome.permissions.contains({
@@ -131,9 +175,15 @@ async function startCapture(tabId: number): Promise<{ success: boolean; error?: 
         permissions: ["debugger"],
       });
       if (!granted) {
-        return { success: false, error: "Debugger permission required for tile capture" };
+        return {
+          success: false,
+          error: "Debugger permission required for tile capture",
+        };
       }
     }
+
+    // Now that we have permission, ensure the debugger listener is attached
+    ensureDebuggerListener();
 
     // Initialize capture state
     tabCaptureState.set(tabId, {
@@ -152,7 +202,7 @@ async function startCapture(tabId: number): Promise<{ success: boolean; error?: 
     // Enable network capture
     await chrome.debugger.sendCommand({ tabId }, "Network.enable", {
       maxResourceBufferSize: 100 * 1024 * 1024, // 100MB buffer
-      maxTotalBufferSize: 200 * 1024 * 1024,    // 200MB total
+      maxTotalBufferSize: 200 * 1024 * 1024, // 200MB total
     });
 
     // Update badge to show recording
@@ -161,7 +211,6 @@ async function startCapture(tabId: number): Promise<{ success: boolean; error?: 
 
     console.log(`[WebMap Archiver] Started recording for tab ${tabId}`);
     return { success: true };
-
   } catch (e) {
     console.error("[WebMap Archiver] Failed to start capture:", e);
     tabCaptureState.set(tabId, { status: "error", message: String(e) });
@@ -172,7 +221,9 @@ async function startCapture(tabId: number): Promise<{ success: boolean; error?: 
 /**
  * Stop recording and build capture bundle.
  */
-async function stopCapture(tabId: number): Promise<{ success: boolean; bundle?: CaptureBundle; error?: string }> {
+async function stopCapture(
+  tabId: number
+): Promise<{ success: boolean; bundle?: CaptureBundle; error?: string }> {
   const state = tabCaptureState.get(tabId);
   if (!state || state.status !== "recording") {
     return { success: false, error: "Not recording" };
@@ -183,21 +234,37 @@ async function stopCapture(tabId: number): Promise<{ success: boolean; bundle?: 
     await chrome.debugger.detach({ tabId });
 
     // Update state to processing
-    tabCaptureState.set(tabId, { status: "processing", progress: 10, message: "Building capture bundle..." });
+    tabCaptureState.set(tabId, {
+      status: "processing",
+      progress: 10,
+      message: "Building capture bundle...",
+    });
     updateBadgeForProcessing(tabId, 10);
 
     // Get captured requests
     const requests = tabCapturedRequests.get(tabId) || [];
 
     // Get style and viewport from content script
-    tabCaptureState.set(tabId, { status: "processing", progress: 30, message: "Capturing map style..." });
+    tabCaptureState.set(tabId, {
+      status: "processing",
+      progress: 30,
+      message: "Capturing map style...",
+    });
     updateBadgeForProcessing(tabId, 30);
 
-    const styleResult = await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_STYLE" });
-    const pageInfo = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_INFO" });
+    const styleResult = await chrome.tabs.sendMessage(tabId, {
+      type: "CAPTURE_STYLE",
+    });
+    const pageInfo = await chrome.tabs.sendMessage(tabId, {
+      type: "GET_PAGE_INFO",
+    });
 
     // Build capture bundle
-    tabCaptureState.set(tabId, { status: "processing", progress: 50, message: "Processing tiles..." });
+    tabCaptureState.set(tabId, {
+      status: "processing",
+      progress: 50,
+      message: "Processing tiles...",
+    });
     updateBadgeForProcessing(tabId, 50);
 
     const bundle = buildCaptureBundle(requests, styleResult, pageInfo, state);
@@ -205,9 +272,10 @@ async function stopCapture(tabId: number): Promise<{ success: boolean; bundle?: 
     // Clean up
     tabCapturedRequests.delete(tabId);
 
-    console.log(`[WebMap Archiver] Capture complete: ${bundle.tiles?.length || 0} tiles`);
+    console.log(
+      `[WebMap Archiver] Capture complete: ${bundle.tiles?.length || 0} tiles`
+    );
     return { success: true, bundle };
-
   } catch (e) {
     console.error("[WebMap Archiver] Failed to stop capture:", e);
     tabCaptureState.set(tabId, { status: "error", message: String(e) });
@@ -243,35 +311,13 @@ function updateBadgeForProcessing(tabId: number, progress: number): void {
 // DEBUGGER EVENT HANDLERS
 // ============================================================================
 
-/**
- * Handle debugger events for network capture.
- */
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  const tabId = source.tabId;
-  if (!tabId) return;
-
-  const state = tabCaptureState.get(tabId);
-  if (!state || state.status !== "recording") return;
-
-  switch (method) {
-    case "Network.responseReceived":
-      handleResponseReceived(tabId, params as NetworkResponseParams);
-      break;
-    case "Network.loadingFinished":
-      handleLoadingFinished(tabId, params as NetworkLoadingFinishedParams);
-      break;
-  }
-});
-
 interface NetworkResponseParams {
   requestId: string;
   response: {
     url: string;
     status: number;
     mimeType: string;
-    headers: Record<string, string>;
   };
-  type: string;
 }
 
 interface NetworkLoadingFinishedParams {
@@ -280,13 +326,16 @@ interface NetworkLoadingFinishedParams {
 }
 
 /**
- * Handle network response metadata.
+ * Handle Network.responseReceived event.
  */
-function handleResponseReceived(tabId: number, params: NetworkResponseParams): void {
+function handleResponseReceived(
+  tabId: number,
+  params: NetworkResponseParams
+): void {
   const { requestId, response } = params;
   const { url, status, mimeType } = response;
 
-  // Check if this looks like a tile request
+  // Parse tile coordinates if this is a tile request
   const tileInfo = parseTileUrl(url);
 
   const request: CapturedRequest = {
@@ -301,7 +350,6 @@ function handleResponseReceived(tabId: number, params: NetworkResponseParams): v
     tileSource: tileInfo?.source,
   };
 
-  // Store request (body will be added in loadingFinished)
   const requests = tabCapturedRequests.get(tabId) || [];
   requests.push(request);
   tabCapturedRequests.set(tabId, requests);
@@ -309,7 +357,7 @@ function handleResponseReceived(tabId: number, params: NetworkResponseParams): v
   // Track for body retrieval
   pendingBodies.set(requestId, { tabId, requestId });
 
-  // Update capture state
+  // Update stats
   const state = tabCaptureState.get(tabId);
   if (state?.status === "recording") {
     state.totalRequests++;
@@ -324,9 +372,12 @@ function handleResponseReceived(tabId: number, params: NetworkResponseParams): v
 }
 
 /**
- * Handle loading finished - retrieve response body.
+ * Handle Network.loadingFinished event.
  */
-async function handleLoadingFinished(tabId: number, params: NetworkLoadingFinishedParams): Promise<void> {
+async function handleLoadingFinished(
+  tabId: number,
+  params: NetworkLoadingFinishedParams
+): Promise<void> {
   const { requestId, encodedDataLength } = params;
 
   const pending = pendingBodies.get(requestId);
@@ -337,24 +388,26 @@ async function handleLoadingFinished(tabId: number, params: NetworkLoadingFinish
   if (!requests) return;
 
   // Find the request - match by being the last one without a body
-  const request = requests.find(r => r.url && !r.responseBody);
+  const request = requests.find((r) => r.url && !r.responseBody);
   if (!request) return;
 
   request.responseSize = encodedDataLength;
 
   // Only fetch body for tiles and important resources
-  const shouldFetchBody = request.isTile ||
+  const shouldFetchBody =
+    request.isTile ||
     request.mimeType.includes("json") ||
     request.url.includes("sprite") ||
     request.url.includes("glyphs");
 
-  if (shouldFetchBody && encodedDataLength < 10 * 1024 * 1024) { // < 10MB
+  if (shouldFetchBody && encodedDataLength < 10 * 1024 * 1024) {
+    // < 10MB
     try {
-      const result = await chrome.debugger.sendCommand(
+      const result = (await chrome.debugger.sendCommand(
         { tabId },
         "Network.getResponseBody",
         { requestId }
-      ) as { body: string; base64Encoded: boolean };
+      )) as { body: string; base64Encoded: boolean };
 
       request.responseBody = result.base64Encoded
         ? result.body
@@ -375,7 +428,9 @@ async function handleLoadingFinished(tabId: number, params: NetworkLoadingFinish
 /**
  * Parse tile coordinates from URL.
  */
-function parseTileUrl(url: string): { coords: { z: number; x: number; y: number }; source: string } | null {
+function parseTileUrl(
+  url: string
+): { coords: { z: number; x: number; y: number }; source: string } | null {
   // Common tile URL patterns:
   // /{z}/{x}/{y}.pbf
   // /{z}/{x}/{y}.png
@@ -422,14 +477,14 @@ function buildCaptureBundle(
 ): CaptureBundle {
   // Extract tiles
   const tiles = requests
-    .filter(r => r.isTile && r.responseBody)
-    .map(r => ({
+    .filter((r) => r.isTile && r.responseBody)
+    .map((r) => ({
       z: r.tileCoords!.z,
       x: r.tileCoords!.x,
       y: r.tileCoords!.y,
       source: r.tileSource!,
       data: r.responseBody!,
-      format: r.mimeType.includes("png") ? "png" as const : "pbf" as const,
+      format: r.mimeType.includes("png") ? ("png" as const) : ("pbf" as const),
     }));
 
   // Build HAR from all requests
@@ -437,7 +492,7 @@ function buildCaptureBundle(
     log: {
       version: "1.2",
       creator: { name: "WebMap Archiver", version: "0.1.0" },
-      entries: requests.map(r => ({
+      entries: requests.map((r) => ({
         startedDateTime: new Date(r.timestamp).toISOString(),
         request: {
           method: r.method,
@@ -476,22 +531,36 @@ function buildCaptureBundle(
         tileCount: tiles.length,
         zoomLevels: recordingState.zoomLevels,
         estimatedSize: recordingState.estimatedSize,
-        recordingDuration: Date.now() - new Date(recordingState.startedAt).getTime(),
+        recordingDuration:
+          Date.now() - new Date(recordingState.startedAt).getTime(),
       },
     },
-    viewport: styleResult?.viewport ? {
-      center: [styleResult.viewport.center.lng, styleResult.viewport.center.lat],
-      zoom: styleResult.viewport.zoom,
-      bounds: styleResult.viewport.bounds ? [
-        [styleResult.viewport.bounds._sw.lng, styleResult.viewport.bounds._sw.lat],
-        [styleResult.viewport.bounds._ne.lng, styleResult.viewport.bounds._ne.lat],
-      ] : undefined,
-      bearing: styleResult.viewport.bearing || 0,
-      pitch: styleResult.viewport.pitch || 0,
-    } : {
-      center: [0, 0],
-      zoom: 10,
-    },
+    viewport: styleResult?.viewport
+      ? {
+          center: [
+            styleResult.viewport.center.lng,
+            styleResult.viewport.center.lat,
+          ],
+          zoom: styleResult.viewport.zoom,
+          bounds: styleResult.viewport.bounds
+            ? [
+                [
+                  styleResult.viewport.bounds._sw.lng,
+                  styleResult.viewport.bounds._sw.lat,
+                ],
+                [
+                  styleResult.viewport.bounds._ne.lng,
+                  styleResult.viewport.bounds._ne.lat,
+                ],
+              ]
+            : undefined,
+          bearing: styleResult.viewport.bearing || 0,
+          pitch: styleResult.viewport.pitch || 0,
+        }
+      : {
+          center: [0, 0],
+          zoom: 10,
+        },
     style: styleResult?.style,
     har,
     tiles,
@@ -530,7 +599,9 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
       });
 
       if (!response.ok) {
-        console.warn(`[WebMap Archiver] ${endpoint} returned ${response.status}`);
+        console.warn(
+          `[WebMap Archiver] ${endpoint} returned ${response.status}`
+        );
         continue;
       }
 
@@ -545,7 +616,10 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
           size: result.size,
         };
       } else {
-        console.warn(`[WebMap Archiver] ${endpoint} processing failed:`, result.error);
+        console.warn(
+          `[WebMap Archiver] ${endpoint} processing failed:`,
+          result.error
+        );
         continue;
       }
     } catch (e) {
@@ -555,7 +629,9 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
   }
 
   // All endpoints failed - fall back to raw bundle download
-  console.log("[WebMap Archiver] All processing endpoints failed, falling back to bundle download");
+  console.log(
+    "[WebMap Archiver] All processing endpoints failed, falling back to bundle download"
+  );
   return {
     success: false,
     fallbackToDownload: true,

@@ -67,13 +67,29 @@ export class MapDetector {
     // Find map containers
     const containers = document.querySelectorAll(".maplibregl-map");
     containers.forEach((container) => {
-      const instance = this.getMapInstance(container as HTMLElement, "maplibre");
+      if (this.isAlreadyDetected(container as HTMLElement)) return;
+
+      let instance = this.getMapInstance(container as HTMLElement, "maplibre");
+
+      // If not found on container, try checking window object for map instances
+      if (!instance) {
+        instance = this.findMapInstanceOnWindow(container as HTMLElement, "maplibre");
+      }
+
       if (instance) {
         this.detectedMaps.push({
           type: "maplibre",
           version: window.maplibregl?.version,
           element: container as HTMLElement,
           instance,
+        });
+      } else {
+        // Even without instance, if we have the container, map is detected
+        this.detectedMaps.push({
+          type: "maplibre",
+          version: window.maplibregl?.version,
+          element: container as HTMLElement,
+          instance: null,
         });
       }
     });
@@ -215,6 +231,32 @@ export class MapDetector {
       default:
         return false;
     }
+  }
+
+  private findMapInstanceOnWindow(container: HTMLElement, type: MapLibraryType): unknown | null {
+    // Try to find map instance on window object by checking if any property
+    // is a valid map instance whose container matches
+    const win = window as unknown as Record<string, unknown>;
+
+    for (const key of Object.keys(win)) {
+      const value = win[key];
+      if (value && typeof value === "object") {
+        const obj = value as Record<string, unknown>;
+
+        // Check if this is a valid map instance
+        if (this.isValidMapInstance(value, type)) {
+          // Check if its container matches
+          if (typeof obj.getContainer === "function") {
+            const mapContainer = obj.getContainer();
+            if (mapContainer === container || (mapContainer as HTMLElement)?.contains?.(container)) {
+              return value;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   private isAlreadyDetected(element: HTMLElement): boolean {

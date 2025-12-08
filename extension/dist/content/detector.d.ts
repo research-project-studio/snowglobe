@@ -30,6 +30,7 @@ export declare class MapDetector {
     private detectByDOM;
     private getMapInstance;
     private isValidMapInstance;
+    private findMapInstanceOnWindow;
     private isAlreadyDetected;
 }
 /**
