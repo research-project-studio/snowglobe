@@ -1,13 +1,11 @@
 /**
- * Popup UI logic for two-step capture flow.
+ * Popup UI logic.
  *
  * States:
  * - no-map: No map detected on page
- * - map-found: Map detected, ready to start capture
- * - recording: Actively recording network traffic
+ * - map-found: Map detected, show instructions to open DevTools
+ * - recording: Recording in progress (managed by DevTools panel)
  * - processing: Building archive
- * - complete: Archive ready
  * - error: Something went wrong
  */
-export {};
 //# sourceMappingURL=popup.d.ts.map

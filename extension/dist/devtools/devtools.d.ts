@@ -1,7 +1,4 @@
 /**
- * DevTools page - creates the panel.
- *
- * PLACEHOLDER IMPLEMENTATION
- * Full DevTools panel functionality can be added later.
+ * DevTools page - creates the WebMap Archiver panel.
  */
 //# sourceMappingURL=devtools.d.ts.map

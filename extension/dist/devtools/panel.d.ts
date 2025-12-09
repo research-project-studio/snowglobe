@@ -1,7 +1,7 @@
 /**
- * DevTools panel logic.
+ * DevTools panel - main capture interface.
  *
- * PLACEHOLDER IMPLEMENTATION
- * Full panel functionality with HAR capture can be added later.
+ * Uses chrome.devtools.network API to capture network traffic reliably.
+ * This works because it runs in the DevTools context, not a service worker.
  */
 //# sourceMappingURL=panel.d.ts.map

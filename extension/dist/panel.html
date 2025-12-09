@@ -2,19 +2,153 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 13px;
-      padding: 12px;
-      background: #fff;
-    }
-    h2 { font-size: 14px; margin-bottom: 12px; }
-    .placeholder { color: #666; }
-  </style>
+  <link rel="stylesheet" href="panel.css">
 </head>
 <body>
-  <h2>WebMap Archiver DevTools</h2>
-  <p class="placeholder">DevTools panel functionality coming soon. Use the extension popup for map capture.</p>
+  <div class="panel-container">
+    <header>
+      <h1>🗺️ WebMap Archiver</h1>
+      <span class="version">v0.2.0</span>
+    </header>
+
+    <!-- Idle State -->
+    <div id="idle-state" class="state">
+      <div class="status-card">
+        <div class="status-icon">📍</div>
+        <div class="status-text">
+          <h2>Ready to Capture</h2>
+          <p id="map-status">Checking for maps...</p>
+        </div>
+      </div>
+
+      <div class="instructions">
+        <h3>How to capture:</h3>
+        <ol>
+          <li>Click <strong>Start Recording</strong> below</li>
+          <li>Pan and zoom the map to load tiles for areas you want</li>
+          <li>Visit different zoom levels to capture detail</li>
+          <li>Click <strong>Stop & Archive</strong> when done</li>
+        </ol>
+      </div>
+
+      <button id="start-btn" class="primary-btn">
+        ▶️ Start Recording
+      </button>
+    </div>
+
+    <!-- Recording State -->
+    <div id="recording-state" class="state hidden">
+      <div class="status-card recording">
+        <div class="status-icon pulse">🔴</div>
+        <div class="status-text">
+          <h2>Recording...</h2>
+          <p id="recording-duration">0:00</p>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-tiles">0</div>
+          <div class="stat-label">Tiles Captured</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-requests">0</div>
+          <div class="stat-label">Total Requests</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-size">0 B</div>
+          <div class="stat-label">Data Size</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-zooms">-</div>
+          <div class="stat-label">Zoom Levels</div>
+        </div>
+      </div>
+
+      <div class="recent-tiles">
+        <h3>Recent Tiles</h3>
+        <div id="tile-list" class="tile-list">
+          <p class="empty-message">Pan or zoom the map to capture tiles...</p>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button id="stop-btn" class="primary-btn">
+          ⏹️ Stop & Archive
+        </button>
+        <button id="cancel-btn" class="secondary-btn">
+          Cancel
+        </button>
+      </div>
+    </div>
+
+    <!-- Processing State -->
+    <div id="processing-state" class="state hidden">
+      <div class="status-card">
+        <div class="status-icon spin">⏳</div>
+        <div class="status-text">
+          <h2 id="processing-title">Processing...</h2>
+          <p id="processing-message">Building capture bundle...</p>
+        </div>
+      </div>
+
+      <div class="progress-container">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-label" id="progress-label">0%</div>
+      </div>
+    </div>
+
+    <!-- Complete State -->
+    <div id="complete-state" class="state hidden">
+      <div class="status-card success">
+        <div class="status-icon">✅</div>
+        <div class="status-text">
+          <h2>Archive Complete!</h2>
+          <p id="complete-filename">archive.zip</p>
+        </div>
+      </div>
+
+      <div class="stats-summary">
+        <p id="complete-stats">0 tiles • 0 B</p>
+      </div>
+
+      <div class="button-group">
+        <button id="download-btn" class="primary-btn">
+          ⬇️ Download Archive
+        </button>
+        <button id="download-bundle-btn" class="secondary-btn">
+          📦 Download Raw Bundle
+        </button>
+        <button id="new-capture-btn" class="secondary-btn">
+          🔄 New Capture
+        </button>
+      </div>
+    </div>
+
+    <!-- Error State -->
+    <div id="error-state" class="state hidden">
+      <div class="status-card error">
+        <div class="status-icon">❌</div>
+        <div class="status-text">
+          <h2>Error</h2>
+          <p id="error-message">Something went wrong.</p>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button id="retry-btn" class="primary-btn">
+          🔄 Try Again
+        </button>
+      </div>
+    </div>
+
+    <footer>
+      <a href="https://github.com/research-project-studio/snowglobe" target="_blank">Documentation</a>
+    </footer>
+  </div>
+
+  <script src="panel.js"></script>
 </body>
 </html>

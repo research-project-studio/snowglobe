@@ -1,1 +1,1 @@
-(()=>{"use strict";chrome.devtools.panels.create("WebMap Archiver","icons/icon-16.png","panel.html",e=>{})})();
+(()=>{"use strict";chrome.devtools.panels.create("WebMap Archiver","icons/icon-16.png","panel.html",e=>{console.log("[WebMap Archiver] DevTools panel created")})})();
