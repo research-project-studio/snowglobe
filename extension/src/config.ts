@@ -6,13 +6,15 @@
 
 export const CONFIG = {
   // Modal cloud endpoint (primary)
-  cloudEndpoint: "https://mariogiampieri--webmap-archiver-fastapi-app.modal.run/process",
+  // Replace YOUR_USERNAME with your Modal username after deployment
+  cloudEndpoint:
+    "https://mariogiampieri--webmap-archiver-fastapi-app.modal.run/process",
 
   // Local development endpoint (modal serve)
-  localDevEndpoint: "http://localhost:8000",
+  localDevEndpoint: "http://localhost:8000/process",
 
   // Local Python service (webmap-archive serve)
-  localServiceEndpoint: "http://localhost:8765",
+  localServiceEndpoint: "http://localhost:8765/process",
 
   // Processing timeout (5 minutes)
   processingTimeout: 300000,
@@ -46,6 +48,7 @@ export type CaptureState =
  * Captured network request during recording.
  */
 export interface CapturedRequest {
+  requestId: string; // Chrome debugger request ID for matching
   url: string;
   method: string;
   status: number;

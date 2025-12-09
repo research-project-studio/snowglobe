@@ -3,7 +3,7 @@
  *
  * Detection strategies:
  * 1. Check for global library objects (window.maplibregl, etc.)
- * 2. Look for characteristic DOM elements
+ * 2. Look for characteristic DOM elements (works even when libraries are bundled)
  * 3. Check for canvas elements with map-like properties
  */
 import { DetectedMap } from "../types/map-libraries";
@@ -23,11 +23,18 @@ export declare class MapDetector {
      * Stop observing for map changes.
      */
     disconnect(): void;
+    /**
+     * DOM-based detection - works even when map libraries are bundled
+     * and not exposed as globals. This is the primary detection method.
+     */
+    private detectByDOM;
+    /**
+     * MapLibre detection via global object (supplements DOM detection)
+     */
     private detectMapLibreGL;
     private detectMapboxGL;
     private detectLeaflet;
     private detectOpenLayers;
-    private detectByDOM;
     private getMapInstance;
     private isValidMapInstance;
     private findMapInstanceOnWindow;

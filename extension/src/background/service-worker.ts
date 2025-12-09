@@ -37,8 +37,17 @@ let debuggerListenerAttached = false;
  * This is called lazily when needed, since debugger is an optional permission.
  */
 function ensureDebuggerListener(): void {
-  if (debuggerListenerAttached) return;
-  if (typeof chrome.debugger === "undefined") return;
+  if (debuggerListenerAttached) {
+    console.log("[WebMap Archiver] Debugger listener already attached");
+    return;
+  }
+
+  if (typeof chrome.debugger === "undefined") {
+    console.error("[WebMap Archiver] chrome.debugger is undefined!");
+    return;
+  }
+
+  console.log("[WebMap Archiver] Attaching debugger event listener...");
 
   chrome.debugger.onEvent.addListener((source, method, params) => {
     const tabId = source.tabId;
@@ -46,6 +55,11 @@ function ensureDebuggerListener(): void {
 
     const state = tabCaptureState.get(tabId);
     if (!state || state.status !== "recording") return;
+
+    // Log all network events for debugging
+    if (method.startsWith("Network.")) {
+      console.log(`[WebMap Archiver] 📡 Debugger event: ${method}`);
+    }
 
     switch (method) {
       case "Network.responseReceived":
@@ -57,8 +71,17 @@ function ensureDebuggerListener(): void {
     }
   });
 
+  // Also listen for detach events
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    console.log(
+      `[WebMap Archiver] Debugger detached from tab ${source.tabId}: ${reason}`
+    );
+  });
+
   debuggerListenerAttached = true;
-  console.log("[WebMap Archiver] Debugger event listener attached");
+  console.log(
+    "[WebMap Archiver] ✅ Debugger event listener attached successfully"
+  );
 }
 
 /**
@@ -159,26 +182,15 @@ function updateBadgeForMapDetection(tabId: number, count: number): void {
 
 /**
  * Start recording network traffic for a tab.
- * Note: Permission must be requested from popup (user gesture context).
+ *
+ * Note: The debugger permission flow in Chrome is handled by chrome.debugger.attach()
+ * itself - it will show a yellow banner asking the user to allow debugging.
  */
 async function startCapture(
   tabId: number
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Verify debugger permission is granted (popup should have requested it)
-    const hasPermission = await chrome.permissions.contains({
-      permissions: ["debugger"],
-    });
-
-    if (!hasPermission) {
-      // Permission should have been granted by popup - if not, return error
-      return {
-        success: false,
-        error: "Debugger permission not granted. Please try again.",
-      };
-    }
-
-    // Now that we have permission, ensure the debugger listener is attached
+    // Ensure the debugger listener is set up
     ensureDebuggerListener();
 
     // Initialize capture state
@@ -194,12 +206,14 @@ async function startCapture(
 
     // Attach debugger to tab
     await chrome.debugger.attach({ tabId }, "1.3");
+    console.log(`[WebMap Archiver] Debugger attached to tab ${tabId}`);
 
     // Enable network capture
     await chrome.debugger.sendCommand({ tabId }, "Network.enable", {
       maxResourceBufferSize: 100 * 1024 * 1024, // 100MB buffer
       maxTotalBufferSize: 200 * 1024 * 1024, // 200MB total
     });
+    console.log(`[WebMap Archiver] Network capture enabled for tab ${tabId}`);
 
     // Update badge to show recording
     chrome.action.setBadgeText({ text: "REC", tabId });
@@ -208,9 +222,21 @@ async function startCapture(
     console.log(`[WebMap Archiver] Started recording for tab ${tabId}`);
     return { success: true };
   } catch (e) {
+    const errorMsg = String(e);
     console.error("[WebMap Archiver] Failed to start capture:", e);
-    tabCaptureState.set(tabId, { status: "error", message: String(e) });
-    return { success: false, error: String(e) };
+
+    // Provide a more helpful error message
+    let userMessage = errorMsg;
+    if (errorMsg.includes("Cannot access") || errorMsg.includes("permission")) {
+      userMessage =
+        "Cannot attach debugger. Try refreshing the page and trying again.";
+    } else if (errorMsg.includes("Another debugger")) {
+      userMessage =
+        "Another debugger is already attached. Close DevTools and try again.";
+    }
+
+    tabCaptureState.set(tabId, { status: "error", message: userMessage });
+    return { success: false, error: userMessage };
   }
 }
 
@@ -225,9 +251,13 @@ async function stopCapture(
     return { success: false, error: "Not recording" };
   }
 
+  console.log(`[WebMap Archiver] Stopping capture for tab ${tabId}`);
+  console.log(`[WebMap Archiver] Recording state:`, state);
+
   try {
     // Detach debugger
     await chrome.debugger.detach({ tabId });
+    console.log(`[WebMap Archiver] Debugger detached`);
 
     // Update state to processing
     tabCaptureState.set(tabId, {
@@ -239,6 +269,19 @@ async function stopCapture(
 
     // Get captured requests
     const requests = tabCapturedRequests.get(tabId) || [];
+    console.log(
+      `[WebMap Archiver] Total captured requests: ${requests.length}`
+    );
+    console.log(
+      `[WebMap Archiver] Tile requests: ${
+        requests.filter((r) => r.isTile).length
+      }`
+    );
+    console.log(
+      `[WebMap Archiver] Requests with body: ${
+        requests.filter((r) => r.responseBody).length
+      }`
+    );
 
     // Get style and viewport from content script
     tabCaptureState.set(tabId, {
@@ -251,9 +294,15 @@ async function stopCapture(
     const styleResult = await chrome.tabs.sendMessage(tabId, {
       type: "CAPTURE_STYLE",
     });
+    console.log(
+      `[WebMap Archiver] Style result:`,
+      styleResult ? "received" : "null"
+    );
+
     const pageInfo = await chrome.tabs.sendMessage(tabId, {
       type: "GET_PAGE_INFO",
     });
+    console.log(`[WebMap Archiver] Page info:`, pageInfo);
 
     // Build capture bundle
     tabCaptureState.set(tabId, {
@@ -269,7 +318,9 @@ async function stopCapture(
     tabCapturedRequests.delete(tabId);
 
     console.log(
-      `[WebMap Archiver] Capture complete: ${bundle.tiles?.length || 0} tiles`
+      `[WebMap Archiver] ✅ Capture complete: ${
+        bundle.tiles?.length || 0
+      } tiles`
     );
     return { success: true, bundle };
   } catch (e) {
@@ -331,10 +382,38 @@ function handleResponseReceived(
   const { requestId, response } = params;
   const { url, status, mimeType } = response;
 
+  // Log all requests for debugging
+  console.log(
+    `[WebMap Archiver] Request: ${url.substring(0, 100)} (${mimeType})`
+  );
+
   // Parse tile coordinates if this is a tile request
   const tileInfo = parseTileUrl(url);
 
+  // Debug logging for tile-like URLs
+  if (
+    mimeType.includes("pbf") ||
+    mimeType.includes("mvt") ||
+    mimeType.includes("protobuf") ||
+    mimeType.includes("octet-stream") ||
+    mimeType.includes("png") ||
+    mimeType.includes("jpeg") ||
+    url.includes("/tiles/") ||
+    /\/\d+\/\d+\/\d+/.test(url)
+  ) {
+    console.log(
+      `[WebMap Archiver] 🗺️ Potential tile: ${url.substring(0, 120)}`,
+      {
+        mimeType,
+        status,
+        detected: tileInfo !== null,
+        tileInfo,
+      }
+    );
+  }
+
   const request: CapturedRequest = {
+    requestId, // Store for matching in loadingFinished
     url,
     method: "GET",
     status,
@@ -359,6 +438,9 @@ function handleResponseReceived(
     state.totalRequests++;
     if (tileInfo) {
       state.tileCount++;
+      console.log(
+        `[WebMap Archiver] ✅ Tile detected! Count: ${state.tileCount}, z=${tileInfo.coords.z}`
+      );
       if (!state.zoomLevels.includes(tileInfo.coords.z)) {
         state.zoomLevels.push(tileInfo.coords.z);
         state.zoomLevels.sort((a, b) => a - b);
@@ -377,15 +459,23 @@ async function handleLoadingFinished(
   const { requestId, encodedDataLength } = params;
 
   const pending = pendingBodies.get(requestId);
-  if (!pending) return;
+  if (!pending) {
+    return;
+  }
   pendingBodies.delete(requestId);
 
   const requests = tabCapturedRequests.get(tabId);
   if (!requests) return;
 
-  // Find the request - match by being the last one without a body
-  const request = requests.find((r) => r.url && !r.responseBody);
-  if (!request) return;
+  // Find the request by matching the requestId we stored
+  // We stored the URL at the time, find that request
+  const request = requests.find((r) => r.requestId === requestId);
+  if (!request) {
+    console.debug(
+      `[WebMap Archiver] No matching request found for requestId ${requestId}`
+    );
+    return;
+  }
 
   request.responseSize = encodedDataLength;
 
@@ -393,12 +483,21 @@ async function handleLoadingFinished(
   const shouldFetchBody =
     request.isTile ||
     request.mimeType.includes("json") ||
+    request.mimeType.includes("protobuf") ||
+    request.mimeType.includes("octet-stream") ||
     request.url.includes("sprite") ||
-    request.url.includes("glyphs");
+    request.url.includes("glyphs") ||
+    request.url.includes(".pbf");
 
   if (shouldFetchBody && encodedDataLength < 10 * 1024 * 1024) {
     // < 10MB
     try {
+      console.log(
+        `[WebMap Archiver] Fetching body for: ${request.url.substring(
+          0,
+          80
+        )}...`
+      );
       const result = (await chrome.debugger.sendCommand(
         { tabId },
         "Network.getResponseBody",
@@ -409,6 +508,12 @@ async function handleLoadingFinished(
         ? result.body
         : btoa(result.body);
 
+      console.log(
+        `[WebMap Archiver] Got body for ${
+          request.isTile ? "TILE" : "resource"
+        }: ${request.url.substring(0, 60)}... (${encodedDataLength} bytes)`
+      );
+
       // Update estimated size
       const state = tabCaptureState.get(tabId);
       if (state?.status === "recording") {
@@ -416,7 +521,9 @@ async function handleLoadingFinished(
       }
     } catch (e) {
       // Body may not be available (e.g., cached)
-      console.debug(`[WebMap Archiver] Could not get body for ${request.url}`);
+      console.debug(
+        `[WebMap Archiver] Could not get body for ${request.url}: ${e}`
+      );
     }
   }
 }
@@ -428,30 +535,72 @@ function parseTileUrl(
   url: string
 ): { coords: { z: number; x: number; y: number }; source: string } | null {
   // Common tile URL patterns:
-  // /{z}/{x}/{y}.pbf
+  // /{z}/{x}/{y}.pbf (standard)
+  // /{z}/{x}/{y}.pbf?key=xxx (MapTiler)
   // /{z}/{x}/{y}.png
   // /tiles/{z}/{x}/{y}
+  // /v3/{z}/{x}/{y}.pbf (MapTiler)
+  // /data/v3/{z}/{x}/{y}.pbf
   // ?x={x}&y={y}&z={z}
 
-  const patterns = [
-    /\/(\d+)\/(\d+)\/(\d+)\.(pbf|mvt|png|jpg|jpeg|webp|avif)/,
-    /\/tiles\/(\d+)\/(\d+)\/(\d+)/,
-    /[?&]z=(\d+)&x=(\d+)&y=(\d+)/,
+  const patterns: Array<{ regex: RegExp; groups: [number, number, number] }> = [
+    // Standard: /{z}/{x}/{y}.ext or /{z}/{x}/{y}.ext?params
+    {
+      regex: /\/(\d+)\/(\d+)\/(\d+)\.(pbf|mvt|png|jpg|jpeg|webp|avif)/,
+      groups: [1, 2, 3],
+    },
+    // /tiles/{z}/{x}/{y}
+    { regex: /\/tiles\/(\d+)\/(\d+)\/(\d+)/, groups: [1, 2, 3] },
+    // Query params: ?z={z}&x={x}&y={y} (various orders)
+    { regex: /[?&]z=(\d+)&x=(\d+)&y=(\d+)/, groups: [1, 2, 3] },
+    { regex: /[?&]x=(\d+)&y=(\d+)&z=(\d+)/, groups: [3, 1, 2] },
+    // Broader pattern: any 3 consecutive numbers that look like z/x/y (z typically 0-22)
+    { regex: /\/(\d{1,2})\/(\d+)\/(\d+)(?:\.|\/|$|\?)/, groups: [1, 2, 3] },
   ];
 
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
+  for (const { regex, groups } of patterns) {
+    const match = url.match(regex);
     if (match) {
-      const [, z, x, y] = match;
+      const z = parseInt(match[groups[0]]);
+      const x = parseInt(match[groups[1]]);
+      const y = parseInt(match[groups[2]]);
+
+      // Sanity check: z should be 0-22 for web mercator
+      if (z < 0 || z > 22) continue;
 
       // Extract source name from URL
-      const urlObj = new URL(url);
-      const source = urlObj.hostname.split(".")[0] || "tiles";
+      try {
+        const urlObj = new URL(url);
+        // Try to get a meaningful source name
+        const hostParts = urlObj.hostname.split(".");
+        let source = hostParts[0];
 
-      return {
-        coords: { z: parseInt(z), x: parseInt(x), y: parseInt(y) },
-        source,
-      };
+        // Handle api.maptiler.com -> maptiler
+        if (source === "api" && hostParts.length > 1) {
+          source = hostParts[1];
+        }
+        // Handle tiles.example.com -> example
+        if (source === "tiles" && hostParts.length > 1) {
+          source = hostParts[1];
+        }
+
+        console.log(
+          `[WebMap Archiver] Detected tile: z=${z}, x=${x}, y=${y}, source=${source}, url=${url.substring(
+            0,
+            100
+          )}`
+        );
+
+        return {
+          coords: { z, x, y },
+          source: source || "tiles",
+        };
+      } catch {
+        return {
+          coords: { z, x, y },
+          source: "tiles",
+        };
+      }
     }
   }
 
@@ -471,6 +620,26 @@ function buildCaptureBundle(
   pageInfo: { url: string; title: string },
   recordingState: CaptureState & { status: "recording" }
 ): CaptureBundle {
+  // Log summary of captured requests
+  console.log(
+    `[WebMap Archiver] Building bundle from ${requests.length} total requests`
+  );
+
+  const tileRequests = requests.filter((r) => r.isTile);
+  const tileWithBody = tileRequests.filter((r) => r.responseBody);
+  console.log(
+    `[WebMap Archiver] Tile requests: ${tileRequests.length}, with body: ${tileWithBody.length}`
+  );
+
+  // Log some sample URLs for debugging
+  const sampleUrls = requests.slice(0, 10).map((r) => ({
+    url: r.url.substring(0, 100),
+    isTile: r.isTile,
+    hasBody: !!r.responseBody,
+    mimeType: r.mimeType,
+  }));
+  console.log("[WebMap Archiver] Sample requests:", sampleUrls);
+
   // Extract tiles
   const tiles = requests
     .filter((r) => r.isTile && r.responseBody)
@@ -482,6 +651,8 @@ function buildCaptureBundle(
       data: r.responseBody!,
       format: r.mimeType.includes("png") ? ("png" as const) : ("pbf" as const),
     }));
+
+  console.log(`[WebMap Archiver] Final tiles in bundle: ${tiles.length}`);
 
   // Build HAR from all requests
   const har: HARLog = {
@@ -583,6 +754,14 @@ interface ProcessResult {
 async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
   const endpoints = getProcessingEndpoints();
 
+  console.log("[WebMap Archiver] Processing bundle with endpoints:", endpoints);
+  console.log("[WebMap Archiver] Bundle summary:", {
+    tiles: bundle.tiles?.length || 0,
+    hasStyle: !!bundle.style,
+    hasHar: !!bundle.har,
+    metadata: bundle.metadata,
+  });
+
   for (const endpoint of endpoints) {
     try {
       console.log(`[WebMap Archiver] Trying endpoint: ${endpoint}`);
@@ -594,17 +773,23 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
         signal: AbortSignal.timeout(CONFIG.processingTimeout),
       });
 
+      console.log(`[WebMap Archiver] Response status: ${response.status}`);
+
       if (!response.ok) {
+        const errorText = await response.text();
         console.warn(
-          `[WebMap Archiver] ${endpoint} returned ${response.status}`
+          `[WebMap Archiver] ${endpoint} returned ${response.status}:`,
+          errorText
         );
         continue;
       }
 
       const result = await response.json();
+      console.log("[WebMap Archiver] Response JSON:", result);
 
       if (result.success) {
         console.log(`[WebMap Archiver] Processing successful via ${endpoint}`);
+        console.log("[WebMap Archiver] Download URL:", result.downloadUrl);
         return {
           success: true,
           downloadUrl: result.downloadUrl,
