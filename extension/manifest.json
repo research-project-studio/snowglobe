@@ -3,7 +3,7 @@
   "name": "WebMap Archiver",
   "version": "0.1.0",
   "description": "Capture web maps for offline archiving",
-
+  "default_locale": "en",
   "permissions": [
     "activeTab",
     "scripting",
@@ -12,17 +12,11 @@
     "notifications"
   ],
 
-  "optional_permissions": [
-    "debugger"
-  ],
+  "optional_permissions": ["debugger"],
 
-  "optional_host_permissions": [
-    "<all_urls>"
-  ],
+  "optional_host_permissions": ["<all_urls>"],
 
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "host_permissions": ["<all_urls>"],
 
   "background": {
     "service_worker": "service-worker.js",

@@ -66,7 +66,7 @@ async function init(): Promise<void> {
   // Get current state from background
   const state = await chrome.runtime.sendMessage({
     type: "GET_TAB_STATE",
-    tabId: tab.id
+    tabId: tab.id,
   });
 
   // Route to appropriate UI state
@@ -116,7 +116,9 @@ function showMapFound(info: { count: number; types: string[] }): void {
   mapFoundState.classList.remove("hidden");
 
   const mapTypes = info.types.join(", ");
-  mapInfo.textContent = `${info.count} map${info.count > 1 ? "s" : ""} detected (${mapTypes})`;
+  mapInfo.textContent = `${info.count} map${
+    info.count > 1 ? "s" : ""
+  } detected (${mapTypes})`;
 }
 
 function showRecording(state: CaptureState & { status: "recording" }): void {
@@ -126,11 +128,14 @@ function showRecording(state: CaptureState & { status: "recording" }): void {
   updateRecordingStats(state);
 }
 
-function updateRecordingStats(state: CaptureState & { status: "recording" }): void {
+function updateRecordingStats(
+  state: CaptureState & { status: "recording" }
+): void {
   tileCount.textContent = state.tileCount.toString();
-  zoomLevels.textContent = state.zoomLevels.length > 0
-    ? `${Math.min(...state.zoomLevels)}-${Math.max(...state.zoomLevels)}`
-    : "-";
+  zoomLevels.textContent =
+    state.zoomLevels.length > 0
+      ? `${Math.min(...state.zoomLevels)}-${Math.max(...state.zoomLevels)}`
+      : "-";
   dataSize.textContent = formatBytes(state.estimatedSize);
 }
 
@@ -142,13 +147,18 @@ function showProcessing(progress: number, message: string): void {
   progressText.textContent = message;
 }
 
-function showComplete(filename: string, stats?: { tiles: number; size: number }): void {
+function showComplete(
+  filename: string,
+  stats?: { tiles: number; size: number }
+): void {
   hideAllStates();
   completeState.classList.remove("hidden");
 
   filenameEl.textContent = filename;
   if (stats) {
-    statsSummary.textContent = `${stats.tiles} tiles • ${formatBytes(stats.size)}`;
+    statsSummary.textContent = `${stats.tiles} tiles • ${formatBytes(
+      stats.size
+    )}`;
   }
 }
 
@@ -163,11 +173,49 @@ function showError(message: string): void {
 // EVENT HANDLERS
 // ============================================================================
 
+/**
+ * Request debugger permission if needed.
+ * MUST be called from user gesture context (like button click in popup).
+ */
+async function ensureDebuggerPermission(): Promise<boolean> {
+  try {
+    // Check if we already have permission
+    const hasPermission = await chrome.permissions.contains({
+      permissions: ["debugger"],
+    });
+
+    if (hasPermission) {
+      return true;
+    }
+
+    // Request permission - this works because we're in a click handler (user gesture)
+    const granted = await chrome.permissions.request({
+      permissions: ["debugger"],
+    });
+
+    return granted;
+  } catch (e) {
+    console.error("[WebMap Archiver] Permission request failed:", e);
+    return false;
+  }
+}
+
 async function handleStartCapture(): Promise<void> {
   if (!currentTabId) return;
 
   startCaptureBtn.setAttribute("disabled", "true");
 
+  // Request debugger permission HERE in the popup (user gesture context)
+  const hasPermission = await ensureDebuggerPermission();
+  if (!hasPermission) {
+    showError(
+      "Debugger permission is required to capture map tiles. Please allow when prompted."
+    );
+    startCaptureBtn.removeAttribute("disabled");
+    return;
+  }
+
+  // Now tell the service worker to start capture (it will just verify, not request)
   const result = await chrome.runtime.sendMessage({
     type: "START_CAPTURE",
     tabId: currentTabId,
@@ -227,7 +275,7 @@ async function handleStopCapture(): Promise<void> {
       saveAs: true,
     });
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     showComplete(processResult.filename, {
       tiles: stopResult.bundle.tiles?.length || 0,
@@ -263,7 +311,7 @@ async function handleCancelCapture(): Promise<void> {
   // Return to map-found state
   const state = await chrome.runtime.sendMessage({
     type: "GET_TAB_STATE",
-    tabId: currentTabId
+    tabId: currentTabId,
   });
 
   if (state.maps?.count > 0) {
@@ -289,7 +337,7 @@ function startStatsPolling(): void {
 
     const state = await chrome.runtime.sendMessage({
       type: "GET_TAB_STATE",
-      tabId: currentTabId
+      tabId: currentTabId,
     });
 
     if (state.capture?.status === "recording") {
@@ -333,7 +381,9 @@ function showFallback(filename: string): void {
   `;
 
   // Re-attach event handler
-  document.getElementById("new-capture-btn")?.addEventListener("click", handleNewCapture);
+  document
+    .getElementById("new-capture-btn")
+    ?.addEventListener("click", handleNewCapture);
 }
 
 function generateFilename(bundle: any): string {

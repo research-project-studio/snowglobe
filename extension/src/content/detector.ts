@@ -3,11 +3,16 @@
  *
  * Detection strategies:
  * 1. Check for global library objects (window.maplibregl, etc.)
- * 2. Look for characteristic DOM elements
+ * 2. Look for characteristic DOM elements (works even when libraries are bundled)
  * 3. Check for canvas elements with map-like properties
  */
 
-import { DetectedMap, MapLibraryType, MapLibreMap, LeafletMap } from "../types/map-libraries";
+import {
+  DetectedMap,
+  MapLibraryType,
+  MapLibreMap,
+  LeafletMap,
+} from "../types/map-libraries";
 
 export class MapDetector {
   private detectedMaps: DetectedMap[] = [];
@@ -21,11 +26,12 @@ export class MapDetector {
     this.detectedMaps = [];
 
     // Try each detection strategy
+    // Note: detectByDOM now runs first and handles bundled libraries
+    this.detectByDOM();
     this.detectMapLibreGL();
     this.detectMapboxGL();
     this.detectLeaflet();
     this.detectOpenLayers();
-    this.detectByDOM();
 
     return this.detectedMaps;
   }
@@ -61,47 +67,36 @@ export class MapDetector {
     }
   }
 
-  private detectMapLibreGL(): void {
-    if (!window.maplibregl) return;
-
-    // Find map containers
-    const containers = document.querySelectorAll(".maplibregl-map");
-    containers.forEach((container) => {
-      if (this.isAlreadyDetected(container as HTMLElement)) return;
-
-      let instance = this.getMapInstance(container as HTMLElement, "maplibre");
-
-      // If not found on container, try checking window object for map instances
-      if (!instance) {
-        instance = this.findMapInstanceOnWindow(container as HTMLElement, "maplibre");
-      }
-
-      if (instance) {
+  /**
+   * DOM-based detection - works even when map libraries are bundled
+   * and not exposed as globals. This is the primary detection method.
+   */
+  private detectByDOM(): void {
+    // MapLibre GL containers (works even without window.maplibregl)
+    const maplibreContainers = document.querySelectorAll(".maplibregl-map");
+    maplibreContainers.forEach((container) => {
+      if (!this.isAlreadyDetected(container as HTMLElement)) {
+        const instance = this.getMapInstance(
+          container as HTMLElement,
+          "maplibre"
+        );
         this.detectedMaps.push({
           type: "maplibre",
-          version: window.maplibregl?.version,
+          version: window.maplibregl?.version, // May be undefined if bundled
           element: container as HTMLElement,
           instance,
         });
-      } else {
-        // Even without instance, if we have the container, map is detected
-        this.detectedMaps.push({
-          type: "maplibre",
-          version: window.maplibregl?.version,
-          element: container as HTMLElement,
-          instance: null,
-        });
       }
     });
-  }
 
-  private detectMapboxGL(): void {
-    if (!window.mapboxgl) return;
-
-    const containers = document.querySelectorAll(".mapboxgl-map");
-    containers.forEach((container) => {
-      const instance = this.getMapInstance(container as HTMLElement, "mapbox");
-      if (instance) {
+    // Mapbox GL containers (works even without window.mapboxgl)
+    const mapboxContainers = document.querySelectorAll(".mapboxgl-map");
+    mapboxContainers.forEach((container) => {
+      if (!this.isAlreadyDetected(container as HTMLElement)) {
+        const instance = this.getMapInstance(
+          container as HTMLElement,
+          "mapbox"
+        );
         this.detectedMaps.push({
           type: "mapbox",
           version: window.mapboxgl?.version,
@@ -110,15 +105,15 @@ export class MapDetector {
         });
       }
     });
-  }
 
-  private detectLeaflet(): void {
-    if (!window.L) return;
-
-    const containers = document.querySelectorAll(".leaflet-container");
-    containers.forEach((container) => {
-      const instance = this.getMapInstance(container as HTMLElement, "leaflet");
-      if (instance) {
+    // Leaflet containers
+    const leafletContainers = document.querySelectorAll(".leaflet-container");
+    leafletContainers.forEach((container) => {
+      if (!this.isAlreadyDetected(container as HTMLElement)) {
+        const instance = this.getMapInstance(
+          container as HTMLElement,
+          "leaflet"
+        );
         this.detectedMaps.push({
           type: "leaflet",
           version: window.L?.version,
@@ -126,6 +121,140 @@ export class MapDetector {
           instance,
         });
       }
+    });
+
+    // OpenLayers containers
+    const olContainers = document.querySelectorAll(".ol-viewport");
+    olContainers.forEach((container) => {
+      const parent = container.parentElement;
+      if (parent && !this.isAlreadyDetected(parent)) {
+        this.detectedMaps.push({
+          type: "openlayers",
+          version: undefined,
+          element: parent,
+          instance: null,
+        });
+      }
+    });
+
+    // Fallback: canvas elements with map-like parent classes
+    const canvases = document.querySelectorAll("canvas");
+    canvases.forEach((canvas) => {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+
+      // Check if this canvas is already part of a detected map
+      if (this.isAlreadyDetected(parent as HTMLElement)) return;
+      if (this.isAlreadyDetected(canvas as HTMLElement)) return;
+
+      // Check for map-like parent classes
+      const classList = parent.className.toLowerCase();
+      if (classList.includes("map")) {
+        this.detectedMaps.push({
+          type: "unknown",
+          element: parent as HTMLElement,
+          instance: null,
+        });
+      }
+    });
+  }
+
+  /**
+   * MapLibre detection via global object (supplements DOM detection)
+   */
+  private detectMapLibreGL(): void {
+    if (!window.maplibregl) return;
+
+    // Find map containers not already detected
+    const containers = document.querySelectorAll(".maplibregl-map");
+    containers.forEach((container) => {
+      if (this.isAlreadyDetected(container as HTMLElement)) {
+        // Update existing detection with version if we now have the global
+        const existing = this.detectedMaps.find((m) => m.element === container);
+        if (existing && !existing.version) {
+          existing.version = window.maplibregl?.version;
+        }
+        // Try to get instance if we don't have it
+        if (existing && !existing.instance) {
+          existing.instance =
+            this.getMapInstance(container as HTMLElement, "maplibre") ||
+            this.findMapInstanceOnWindow(container as HTMLElement, "maplibre");
+        }
+        return;
+      }
+
+      let instance = this.getMapInstance(container as HTMLElement, "maplibre");
+      if (!instance) {
+        instance = this.findMapInstanceOnWindow(
+          container as HTMLElement,
+          "maplibre"
+        );
+      }
+
+      this.detectedMaps.push({
+        type: "maplibre",
+        version: window.maplibregl?.version,
+        element: container as HTMLElement,
+        instance,
+      });
+    });
+  }
+
+  private detectMapboxGL(): void {
+    if (!window.mapboxgl) return;
+
+    const containers = document.querySelectorAll(".mapboxgl-map");
+    containers.forEach((container) => {
+      if (this.isAlreadyDetected(container as HTMLElement)) {
+        const existing = this.detectedMaps.find((m) => m.element === container);
+        if (existing && !existing.version) {
+          existing.version = window.mapboxgl?.version;
+        }
+        if (existing && !existing.instance) {
+          existing.instance = this.getMapInstance(
+            container as HTMLElement,
+            "mapbox"
+          );
+        }
+        return;
+      }
+
+      const instance = this.getMapInstance(container as HTMLElement, "mapbox");
+      this.detectedMaps.push({
+        type: "mapbox",
+        version: window.mapboxgl?.version,
+        element: container as HTMLElement,
+        instance,
+      });
+    });
+  }
+
+  private detectLeaflet(): void {
+    if (!window.L) return;
+
+    const containers = document.querySelectorAll(".leaflet-container");
+    containers.forEach((container) => {
+      if (this.isAlreadyDetected(container as HTMLElement)) {
+        const existing = this.detectedMaps.find((m) => m.element === container);
+        if (existing && !existing.version) {
+          existing.version = window.L?.version;
+        }
+        if (existing && !existing.instance) {
+          existing.instance = this.getMapInstance(
+            container as HTMLElement,
+            "leaflet"
+          );
+        }
+        return;
+      }
+
+      const instance = this.getMapInstance(container as HTMLElement, "leaflet");
+      this.detectedMaps.push({
+        type: "leaflet",
+        version: window.L?.version,
+        element: container as HTMLElement,
+        instance,
+      });
     });
   }
 
@@ -136,34 +265,11 @@ export class MapDetector {
     const containers = document.querySelectorAll(".ol-viewport");
     containers.forEach((container) => {
       const parent = container.parentElement;
-      if (parent) {
+      if (parent && !this.isAlreadyDetected(parent)) {
         this.detectedMaps.push({
           type: "openlayers",
           version: undefined,
           element: parent,
-          instance: null, // Harder to get OL instance
-        });
-      }
-    });
-  }
-
-  private detectByDOM(): void {
-    // Fallback: look for canvas elements that might be maps
-    // This catches cases where global objects aren't exposed
-    const canvases = document.querySelectorAll("canvas");
-    canvases.forEach((canvas) => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-
-      // Check for map-like parent classes
-      const classList = parent.className.toLowerCase();
-      if (
-        classList.includes("map") &&
-        !this.isAlreadyDetected(parent as HTMLElement)
-      ) {
-        this.detectedMaps.push({
-          type: "unknown",
-          element: parent as HTMLElement,
           instance: null,
         });
       }
@@ -199,7 +305,8 @@ export class MapDetector {
 
     // Try React fiber
     const fiberKey = Object.keys(container).find(
-      (k) => k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance")
+      (k) =>
+        k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance")
     );
     if (fiberKey) {
       // Could traverse React tree to find map prop
@@ -233,26 +340,37 @@ export class MapDetector {
     }
   }
 
-  private findMapInstanceOnWindow(container: HTMLElement, type: MapLibraryType): unknown | null {
+  private findMapInstanceOnWindow(
+    container: HTMLElement,
+    type: MapLibraryType
+  ): unknown | null {
     // Try to find map instance on window object by checking if any property
     // is a valid map instance whose container matches
     const win = window as unknown as Record<string, unknown>;
 
     for (const key of Object.keys(win)) {
-      const value = win[key];
-      if (value && typeof value === "object") {
-        const obj = value as Record<string, unknown>;
+      try {
+        const value = win[key];
+        if (value && typeof value === "object") {
+          const obj = value as Record<string, unknown>;
 
-        // Check if this is a valid map instance
-        if (this.isValidMapInstance(value, type)) {
-          // Check if its container matches
-          if (typeof obj.getContainer === "function") {
-            const mapContainer = obj.getContainer();
-            if (mapContainer === container || (mapContainer as HTMLElement)?.contains?.(container)) {
-              return value;
+          // Check if this is a valid map instance
+          if (this.isValidMapInstance(value, type)) {
+            // Check if its container matches
+            if (typeof obj.getContainer === "function") {
+              const mapContainer = obj.getContainer();
+              if (
+                mapContainer === container ||
+                (mapContainer as HTMLElement)?.contains?.(container)
+              ) {
+                return value;
+              }
             }
           }
         }
+      } catch {
+        // Skip properties that throw on access
+        continue;
       }
     }
 

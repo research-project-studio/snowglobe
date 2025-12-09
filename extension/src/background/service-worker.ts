@@ -159,27 +159,23 @@ function updateBadgeForMapDetection(tabId: number, count: number): void {
 
 /**
  * Start recording network traffic for a tab.
+ * Note: Permission must be requested from popup (user gesture context).
  */
 async function startCapture(
   tabId: number
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Check if debugger permission is granted
+    // Verify debugger permission is granted (popup should have requested it)
     const hasPermission = await chrome.permissions.contains({
       permissions: ["debugger"],
     });
 
     if (!hasPermission) {
-      // Request permission
-      const granted = await chrome.permissions.request({
-        permissions: ["debugger"],
-      });
-      if (!granted) {
-        return {
-          success: false,
-          error: "Debugger permission required for tile capture",
-        };
-      }
+      // Permission should have been granted by popup - if not, return error
+      return {
+        success: false,
+        error: "Debugger permission not granted. Please try again.",
+      };
     }
 
     // Now that we have permission, ensure the debugger listener is attached
