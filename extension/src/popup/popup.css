@@ -5,12 +5,12 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: #333;
   background: #fff;
-  min-width: 300px;
+  width: 320px;
 }
 
 .container {
@@ -31,14 +31,16 @@ header {
   height: 32px;
 }
 
-h1 {
+header h1 {
   font-size: 16px;
   font-weight: 600;
+  color: #1a1a1a;
 }
 
+/* States */
 .state {
   text-align: center;
-  padding: 20px 0;
+  padding: 8px 0;
 }
 
 .state.hidden {
@@ -46,8 +48,8 @@ h1 {
 }
 
 .state .icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 32px;
+  margin-bottom: 8px;
 }
 
 .state p {
@@ -55,26 +57,47 @@ h1 {
 }
 
 .hint {
-  color: #666;
   font-size: 12px;
+  color: #666;
 }
 
+/* Capture Instructions */
+.capture-instructions {
+  text-align: left;
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.capture-instructions p {
+  margin-bottom: 8px;
+}
+
+.capture-instructions ol {
+  margin-left: 20px;
+  font-size: 13px;
+}
+
+.capture-instructions li {
+  margin-bottom: 4px;
+}
+
+/* Buttons */
 .actions {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 16px;
+  margin: 16px 0 8px;
 }
 
 button {
-  display: inline-block;
-  padding: 10px 20px;
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s, transform 0.1s;
+  transition: background-color 0.2s, transform 0.1s;
 }
 
 button:hover {
@@ -86,83 +109,33 @@ button:active {
 }
 
 button.primary {
-  background: #4CAF50;
+  background: #2563eb;
   color: white;
 }
 
 button.primary:hover {
-  background: #43A047;
+  background: #1d4ed8;
 }
 
-button.primary:disabled {
-  background: #ccc;
+button.secondary {
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+button.secondary:hover {
+  background: #e2e8f0;
+}
+
+button:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }
 
-button.secondary {
-  background: #f5f5f5;
-  color: #333;
-  border: 1px solid #ddd;
-}
-
-button.secondary:hover {
-  background: #e0e0e0;
-}
-
-.progress-bar {
-  height: 8px;
-  background: #e0e0e0;
-  border-radius: 4px;
-  overflow: hidden;
-  margin: 16px 0 8px;
-}
-
-.progress-fill {
-  height: 100%;
-  background: #4CAF50;
-  width: 0%;
-  transition: width 0.3s ease;
-}
-
-.progress-text {
-  font-size: 12px;
-  color: #666;
-}
-
-.filename {
-  font-family: monospace;
-  font-size: 12px;
-  color: #666;
-  word-break: break-all;
-}
-
-.stats-summary {
-  font-size: 12px;
-  color: #666;
-  margin-top: 8px;
-}
-
-footer {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #e0e0e0;
-  text-align: center;
-  font-size: 12px;
-}
-
-footer a {
-  color: #1976D2;
-  text-decoration: none;
-}
-
-footer a:hover {
-  text-decoration: underline;
-}
-
-/* Recording state styles */
-.recording-icon {
-  animation: pulse 1s ease-in-out infinite;
+/* Recording State */
+.recording-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse {
@@ -170,17 +143,12 @@ footer a:hover {
   50% { opacity: 0.5; }
 }
 
-.recording-label {
-  font-weight: 600;
-  color: #f44336;
-}
-
 .stats {
   display: flex;
   justify-content: space-around;
   margin: 16px 0;
   padding: 12px;
-  background: #f5f5f5;
+  background: #f8f9fa;
   border-radius: 8px;
 }
 
@@ -192,11 +160,56 @@ footer a:hover {
   display: block;
   font-size: 20px;
   font-weight: 600;
-  color: #333;
+  color: #1a1a1a;
 }
 
 .stat-label {
   font-size: 11px;
   color: #666;
   text-transform: uppercase;
+}
+
+/* Progress Bar */
+.progress-bar {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: #666;
+}
+
+/* Footer */
+footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e0e0e0;
+  text-align: center;
+  font-size: 12px;
+}
+
+footer a {
+  color: #666;
+  text-decoration: none;
+}
+
+footer a:hover {
+  color: #2563eb;
+}
+
+.separator {
+  margin: 0 8px;
+  color: #ccc;
 }

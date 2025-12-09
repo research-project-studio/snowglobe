@@ -46,17 +46,15 @@ export type CaptureState =
 
 /**
  * Captured network request during recording.
+ * Used by DevTools panel to track network traffic.
  */
 export interface CapturedRequest {
-  requestId: string; // Chrome debugger request ID for matching
   url: string;
   method: string;
   status: number;
   mimeType: string;
-  responseSize: number;
-  responseBody?: string; // base64 encoded
-  timestamp: number;
-  // Tile-specific fields (if detected as tile request)
+  size: number; // response size in bytes
+  body?: string; // base64 encoded response body
   isTile: boolean;
   tileCoords?: { z: number; x: number; y: number };
   tileSource?: string;

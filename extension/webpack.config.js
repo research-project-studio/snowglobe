@@ -40,6 +40,7 @@ module.exports = {
         { from: 'src/popup/popup.css', to: 'popup.css' },
         { from: 'src/devtools/devtools.html', to: 'devtools.html' },
         { from: 'src/devtools/panel.html', to: 'panel.html' },
+        { from: 'src/devtools/panel.css', to: 'panel.css' },
       ],
     }),
   ],

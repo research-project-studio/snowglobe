@@ -1,8 +1,5 @@
 /**
- * DevTools page - creates the panel.
- *
- * PLACEHOLDER IMPLEMENTATION
- * Full DevTools panel functionality can be added later.
+ * DevTools page - creates the WebMap Archiver panel.
  */
 
 chrome.devtools.panels.create(
@@ -10,6 +7,6 @@ chrome.devtools.panels.create(
   "icons/icon-16.png",
   "panel.html",
   (panel) => {
-    // Panel created
+    console.log("[WebMap Archiver] DevTools panel created");
   }
 );

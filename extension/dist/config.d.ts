@@ -38,15 +38,15 @@ export type CaptureState = {
 };
 /**
  * Captured network request during recording.
+ * Used by DevTools panel to track network traffic.
  */
 export interface CapturedRequest {
     url: string;
     method: string;
     status: number;
     mimeType: string;
-    responseSize: number;
-    responseBody?: string;
-    timestamp: number;
+    size: number;
+    body?: string;
     isTile: boolean;
     tileCoords?: {
         z: number;

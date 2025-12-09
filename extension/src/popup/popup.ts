@@ -1,61 +1,44 @@
 /**
- * Popup UI logic for two-step capture flow.
+ * Popup UI logic.
  *
  * States:
  * - no-map: No map detected on page
- * - map-found: Map detected, ready to start capture
- * - recording: Actively recording network traffic
+ * - map-found: Map detected, show instructions to open DevTools
+ * - recording: Recording in progress (managed by DevTools panel)
  * - processing: Building archive
- * - complete: Archive ready
  * - error: Something went wrong
  */
 
-import { CaptureState } from "../config";
-
-// UI Elements - States
+(function() {
+// UI Elements
 const noMapState = document.getElementById("no-map")!;
 const mapFoundState = document.getElementById("map-found")!;
 const recordingState = document.getElementById("recording")!;
 const processingState = document.getElementById("processing")!;
-const completeState = document.getElementById("complete")!;
 const errorState = document.getElementById("error")!;
 
-// UI Elements - Map Found
 const mapInfo = document.getElementById("map-info")!;
-const startCaptureBtn = document.getElementById("start-capture-btn")!;
+const openDevtoolsBtn = document.getElementById("open-devtools-btn")!;
+const focusDevtoolsBtn = document.getElementById("focus-devtools-btn")!;
 
-// UI Elements - Recording
 const tileCount = document.getElementById("tile-count")!;
-const zoomLevels = document.getElementById("zoom-levels")!;
+const requestCount = document.getElementById("request-count")!;
 const dataSize = document.getElementById("data-size")!;
-const stopCaptureBtn = document.getElementById("stop-capture-btn")!;
-const cancelCaptureBtn = document.getElementById("cancel-capture-btn")!;
 
-// UI Elements - Processing
 const processingMessage = document.getElementById("processing-message")!;
 const progressFill = document.getElementById("progress-fill")!;
 const progressText = document.getElementById("progress-text")!;
 
-// UI Elements - Complete
-const filenameEl = document.getElementById("filename")!;
-const statsSummary = document.getElementById("stats-summary")!;
-const newCaptureBtn = document.getElementById("new-capture-btn")!;
-
-// UI Elements - Error
 const errorMessage = document.getElementById("error-message")!;
 const retryBtn = document.getElementById("retry-btn")!;
 
-// Current tab ID
 let currentTabId: number | null = null;
-
-// Polling interval for recording stats
 let statsInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Initialize popup.
  */
 async function init(): Promise<void> {
-  // Get current tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     showError("Cannot access current tab");
@@ -63,38 +46,35 @@ async function init(): Promise<void> {
   }
   currentTabId = tab.id;
 
-  // Get current state from background
+  // Get current state
   const state = await chrome.runtime.sendMessage({
     type: "GET_TAB_STATE",
-    tabId: tab.id
+    tabId: tab.id,
   });
 
-  // Route to appropriate UI state
+  // Route to appropriate UI
   if (state.capture?.status === "recording") {
     showRecording(state.capture);
     startStatsPolling();
   } else if (state.capture?.status === "processing") {
-    showProcessing(state.capture.progress, state.capture.message);
+    showProcessing(state.capture.progress || 0, state.capture.message || "Processing...");
   } else if (state.maps?.count > 0) {
     showMapFound(state.maps);
   } else {
     showNoMap();
   }
 
-  // Set up event handlers
   setupEventHandlers();
 }
 
 function setupEventHandlers(): void {
-  startCaptureBtn.addEventListener("click", handleStartCapture);
-  stopCaptureBtn.addEventListener("click", handleStopCapture);
-  cancelCaptureBtn.addEventListener("click", handleCancelCapture);
-  newCaptureBtn.addEventListener("click", handleNewCapture);
+  openDevtoolsBtn.addEventListener("click", handleOpenDevtools);
+  focusDevtoolsBtn?.addEventListener("click", handleOpenDevtools);
   retryBtn.addEventListener("click", init);
 }
 
 // ============================================================================
-// STATE DISPLAY FUNCTIONS
+// STATE DISPLAY
 // ============================================================================
 
 function hideAllStates(): void {
@@ -102,7 +82,6 @@ function hideAllStates(): void {
   mapFoundState.classList.add("hidden");
   recordingState.classList.add("hidden");
   processingState.classList.add("hidden");
-  completeState.classList.add("hidden");
   errorState.classList.add("hidden");
 }
 
@@ -119,105 +98,23 @@ function showMapFound(info: { count: number; types: string[] }): void {
   mapInfo.textContent = `${info.count} map${info.count > 1 ? "s" : ""} detected (${mapTypes})`;
 }
 
-function showRecording(state: CaptureState & { status: "recording" }): void {
+function showRecording(state: { tileCount?: number; totalRequests?: number; estimatedSize?: number }): void {
   hideAllStates();
   recordingState.classList.remove("hidden");
-
   updateRecordingStats(state);
 }
 
-function updateRecordingStats(state: CaptureState & { status: "recording" }): void {
-  tileCount.textContent = state.tileCount.toString();
-  zoomLevels.textContent = state.zoomLevels.length > 0
-    ? `${Math.min(...state.zoomLevels)}-${Math.max(...state.zoomLevels)}`
-    : "-";
-  dataSize.textContent = formatBytes(state.estimatedSize);
+function updateRecordingStats(state: { tileCount?: number; totalRequests?: number; estimatedSize?: number }): void {
+  tileCount.textContent = (state.tileCount || 0).toString();
+  requestCount.textContent = (state.totalRequests || 0).toString();
+  dataSize.textContent = formatBytes(state.estimatedSize || 0);
 }
 
 function showProcessing(progress: number, message: string): void {
   hideAllStates();
   processingState.classList.remove("hidden");
-
   progressFill.style.width = `${progress}%`;
   progressText.textContent = message;
-}
-
-// Store last download info for retry
-let lastDownloadUrl: string | null = null;
-let lastDownloadFilename: string | null = null;
-let lastBundle: any = null;
-
-function showComplete(filename: string, stats?: { tiles: number; size: number }, downloadUrl?: string, bundle?: any): void {
-  hideAllStates();
-  completeState.classList.remove("hidden");
-
-  // Store for potential retry
-  lastDownloadFilename = filename;
-  if (downloadUrl) {
-    lastDownloadUrl = downloadUrl;
-    console.log("[WebMap Archiver] Download URL:", downloadUrl);
-  }
-  if (bundle) {
-    lastBundle = bundle;
-  }
-
-  const statsText = stats ? `${stats.tiles} tiles • ${formatBytes(stats.size)}` : "";
-  
-  completeState.innerHTML = `
-    <p class="icon">✅</p>
-    <p><strong>Archive complete!</strong></p>
-    <p class="filename">${filename}</p>
-    ${statsText ? `<p class="stats">${statsText}</p>` : ""}
-    <div class="actions" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
-      <button id="download-btn" class="primary">⬇️ Download Archive</button>
-      <button id="download-bundle-btn" class="secondary">📦 Download Raw Bundle</button>
-      <button id="new-capture-btn" class="secondary">📸 New Capture</button>
-    </div>
-  `;
-
-  // Attach event handlers
-  document.getElementById("new-capture-btn")?.addEventListener("click", handleNewCapture);
-  
-  document.getElementById("download-btn")?.addEventListener("click", async () => {
-    console.log("[WebMap Archiver] Download button clicked");
-    console.log("[WebMap Archiver] URL:", lastDownloadUrl);
-    console.log("[WebMap Archiver] Filename:", lastDownloadFilename);
-    
-    if (lastDownloadUrl && lastDownloadFilename) {
-      try {
-        // Try to download via Chrome API
-        const downloadId = await chrome.downloads.download({
-          url: lastDownloadUrl,
-          filename: lastDownloadFilename,
-          saveAs: true,
-        });
-        console.log("[WebMap Archiver] Download started, ID:", downloadId);
-      } catch (e) {
-        console.error("[WebMap Archiver] Download failed:", e);
-        // Try opening the URL directly
-        window.open(lastDownloadUrl, '_blank');
-      }
-    } else {
-      console.error("[WebMap Archiver] No download URL available");
-      alert("Download URL not available. Try downloading the raw bundle instead.");
-    }
-  });
-
-  document.getElementById("download-bundle-btn")?.addEventListener("click", () => {
-    console.log("[WebMap Archiver] Download bundle button clicked");
-    if (lastBundle) {
-      // Download the raw capture bundle as fallback
-      const bundleFilename = lastDownloadFilename?.replace('.zip', '.webmap-capture.json') || 'capture.webmap-capture.json';
-      chrome.runtime.sendMessage({
-        type: "DOWNLOAD_BUNDLE",
-        bundle: lastBundle,
-        filename: bundleFilename,
-      });
-    } else {
-      console.error("[WebMap Archiver] No bundle available");
-      alert("Bundle data not available.");
-    }
-  });
 }
 
 function showError(message: string): void {
@@ -231,173 +128,21 @@ function showError(message: string): void {
 // EVENT HANDLERS
 // ============================================================================
 
-/**
- * Request debugger permission if needed.
- * 
- * Note: The debugger permission is special in Chrome. Unlike other permissions,
- * it may not show a visible prompt from permissions.request(). The actual
- * permission grant often happens when chrome.debugger.attach() is called,
- * which shows Chrome's yellow "debugging" banner.
- * 
- * So we try to request here, but if it returns false we still proceed -
- * the service worker's attach() call will handle the actual permission flow.
- */
-async function ensureDebuggerPermission(): Promise<boolean> {
-  try {
-    // Check if we already have permission
-    const hasPermission = await chrome.permissions.contains({
-      permissions: ["debugger"],
-    });
+function handleOpenDevtools(): void {
+  // Open DevTools for the current tab
+  // Note: We can't directly open to our panel, but we can open DevTools
+  if (currentTabId) {
+    // Send message to open DevTools (will be handled by trying to inspect)
+    chrome.tabs.sendMessage(currentTabId, { type: "OPEN_DEVTOOLS_HINT" });
 
-    if (hasPermission) {
-      return true;
-    }
-
-    // Try to request permission
-    // This may or may not show a prompt depending on Chrome's behavior
-    const granted = await chrome.permissions.request({
-      permissions: ["debugger"],
-    });
-
-    // Even if this returns false, we'll still try - the actual debugger.attach()
-    // call in the service worker may trigger Chrome's permission flow
-    if (!granted) {
-      console.log("[WebMap Archiver] permissions.request() returned false, will try attach() anyway");
-    }
-
-    // Return true to proceed - let the service worker handle the actual attach
-    return true;
-  } catch (e) {
-    console.error("[WebMap Archiver] Permission check failed:", e);
-    // Still return true to try the attach
-    return true;
+    // Show instructions
+    alert(
+      "DevTools will open. Look for the 'WebMap Archiver' panel tab.\n\n" +
+      "If you don't see it, you may need to:\n" +
+      "1. Close and reopen DevTools\n" +
+      "2. Click the >> arrows to find more panels"
+    );
   }
-}
-
-async function handleStartCapture(): Promise<void> {
-  if (!currentTabId) return;
-
-  startCaptureBtn.setAttribute("disabled", "true");
-
-  // Try to ensure debugger permission (this may or may not show a prompt)
-  await ensureDebuggerPermission();
-
-  // Tell the service worker to start capture
-  // The actual debugger.attach() call will handle permission if needed
-  const result = await chrome.runtime.sendMessage({
-    type: "START_CAPTURE",
-    tabId: currentTabId,
-  });
-
-  if (result.success) {
-    showRecording({
-      status: "recording",
-      startedAt: new Date().toISOString(),
-      tileCount: 0,
-      totalRequests: 0,
-      zoomLevels: [],
-      estimatedSize: 0,
-    });
-    startStatsPolling();
-  } else {
-    showError(result.error || "Failed to start capture");
-  }
-
-  startCaptureBtn.removeAttribute("disabled");
-}
-
-async function handleStopCapture(): Promise<void> {
-  if (!currentTabId) return;
-
-  stopCaptureBtn.setAttribute("disabled", "true");
-  stopStatsPolling();
-
-  showProcessing(10, "Stopping capture...");
-
-  // Stop capture and get bundle
-  const stopResult = await chrome.runtime.sendMessage({
-    type: "STOP_CAPTURE",
-    tabId: currentTabId,
-  });
-
-  if (!stopResult.success) {
-    showError(stopResult.error || "Failed to stop capture");
-    return;
-  }
-
-  // Process the bundle
-  showProcessing(40, "Uploading to cloud...");
-
-  const processResult = await chrome.runtime.sendMessage({
-    type: "PROCESS_BUNDLE",
-    bundle: stopResult.bundle,
-  });
-
-  if (processResult.success) {
-    showProcessing(80, "Downloading archive...");
-
-    // Log the result for debugging
-    console.log("[WebMap Archiver] Process result:", processResult);
-
-    // Trigger automatic download
-    try {
-      await chrome.downloads.download({
-        url: processResult.downloadUrl,
-        filename: processResult.filename,
-        saveAs: true,
-      });
-    } catch (e) {
-      console.error("[WebMap Archiver] Auto-download failed:", e);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    showComplete(processResult.filename, {
-      tiles: stopResult.bundle.tiles?.length || 0,
-      size: processResult.size || 0,
-    }, processResult.downloadUrl, stopResult.bundle);
-  } else if (processResult.fallbackToDownload) {
-    // Download raw bundle
-    showProcessing(80, "Downloading capture bundle...");
-
-    const filename = generateFilename(stopResult.bundle);
-    await chrome.runtime.sendMessage({
-      type: "DOWNLOAD_BUNDLE",
-      bundle: stopResult.bundle,
-      filename,
-    });
-
-    showFallback(filename);
-  } else {
-    showError(processResult.error || "Processing failed");
-  }
-}
-
-async function handleCancelCapture(): Promise<void> {
-  if (!currentTabId) return;
-
-  stopStatsPolling();
-
-  await chrome.runtime.sendMessage({
-    type: "CANCEL_CAPTURE",
-    tabId: currentTabId,
-  });
-
-  // Return to map-found state
-  const state = await chrome.runtime.sendMessage({
-    type: "GET_TAB_STATE",
-    tabId: currentTabId
-  });
-
-  if (state.maps?.count > 0) {
-    showMapFound(state.maps);
-  } else {
-    showNoMap();
-  }
-}
-
-function handleNewCapture(): void {
-  init();
 }
 
 // ============================================================================
@@ -406,19 +151,21 @@ function handleNewCapture(): void {
 
 function startStatsPolling(): void {
   stopStatsPolling();
-
   statsInterval = setInterval(async () => {
     if (!currentTabId) return;
 
     const state = await chrome.runtime.sendMessage({
       type: "GET_TAB_STATE",
-      tabId: currentTabId
+      tabId: currentTabId,
     });
 
     if (state.capture?.status === "recording") {
       updateRecordingStats(state.capture);
+    } else if (state.capture?.status === "processing") {
+      showProcessing(state.capture.progress || 0, state.capture.message || "Processing...");
     } else {
       stopStatsPolling();
+      init(); // Refresh state
     }
   }, 500);
 }
@@ -434,38 +181,6 @@ function stopStatsPolling(): void {
 // HELPERS
 // ============================================================================
 
-function showFallback(filename: string): void {
-  hideAllStates();
-  completeState.classList.remove("hidden");
-
-  filenameEl.textContent = filename;
-  completeState.innerHTML = `
-    <p class="icon">📦</p>
-    <p>Capture bundle downloaded!</p>
-    <p class="filename">${filename}</p>
-    <p class="hint" style="margin-top: 8px;">
-      Cloud processing unavailable.<br>
-      Process manually with CLI:<br>
-      <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 11px;">
-        webmap-archive process &lt;file&gt;
-      </code>
-    </p>
-    <div class="actions">
-      <button id="new-capture-btn" class="secondary">📸 New Capture</button>
-    </div>
-  `;
-
-  // Re-attach event handler
-  document.getElementById("new-capture-btn")?.addEventListener("click", handleNewCapture);
-}
-
-function generateFilename(bundle: any): string {
-  const url = new URL(bundle.metadata.url);
-  const host = url.hostname.replace(/\./g, "-");
-  const date = bundle.metadata.capturedAt.split("T")[0];
-  return `${host}-${date}.webmap-capture.json`;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -474,10 +189,7 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-// Initialize on load
+// Initialize
 document.addEventListener("DOMContentLoaded", init);
-
-// Clean up on unload
-window.addEventListener("unload", () => {
-  stopStatsPolling();
-});
+window.addEventListener("unload", stopStatsPolling);
+})();
