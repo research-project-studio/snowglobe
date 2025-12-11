@@ -135,34 +135,62 @@ export function captureStyleViaInjection(): Promise<MapLibreStyle | null> {
     const script = document.createElement("script");
     script.textContent = `
       (function() {
-        // Find map instance
-        const containers = document.querySelectorAll('.maplibregl-map, .mapboxgl-map');
-        for (const container of containers) {
-          // Try common property names for map instance
-          for (const prop of ['_map', '__map', 'map']) {
-            const instance = container[prop];
-            if (instance && typeof instance.getStyle === 'function') {
-              try {
-                const style = instance.getStyle();
-                const viewport = {
-                  center: instance.getCenter(),
-                  zoom: instance.getZoom(),
-                  bounds: instance.getBounds(),
-                  bearing: instance.getBearing?.() || 0,
-                  pitch: instance.getPitch?.() || 0,
-                };
-                window.postMessage({
-                  type: 'WEBMAP_ARCHIVER_CAPTURE',
-                  style: style,
-                  viewport: viewport,
-                }, '*');
-                return;
-              } catch (e) {
-                console.error('WebMap Archiver: Failed to capture style', e);
-              }
+        // Helper function to capture from a map instance
+        function captureFromInstance(instance) {
+          if (instance && typeof instance.getStyle === 'function') {
+            try {
+              const style = instance.getStyle();
+              const viewport = {
+                center: instance.getCenter?.() || [0, 0],
+                zoom: instance.getZoom?.() || 0,
+                bounds: instance.getBounds?.(),
+                bearing: instance.getBearing?.() || 0,
+                pitch: instance.getPitch?.() || 0,
+              };
+              window.postMessage({
+                type: 'WEBMAP_ARCHIVER_CAPTURE',
+                style: style,
+                viewport: viewport,
+              }, '*');
+              return true;
+            } catch (e) {
+              console.error('WebMap Archiver: Failed to capture style', e);
             }
           }
+          return false;
         }
+
+        // Strategy 1: Check common window properties
+        const windowCandidates = [
+          window.map,
+          window.maplibreMap,
+          window.mapboxMap,
+        ];
+
+        for (const candidate of windowCandidates) {
+          if (captureFromInstance(candidate)) return;
+        }
+
+        // Strategy 2: Check map containers with special properties
+        const containers = document.querySelectorAll('.maplibregl-map, .mapboxgl-map');
+        for (const container of containers) {
+          // Try MapLibre/Mapbox internal properties
+          if (captureFromInstance(container.__maplibregl_map)) return;
+          if (captureFromInstance(container.__mapboxgl_map)) return;
+
+          // Try common custom property names
+          for (const prop of ['_map', '__map', 'map']) {
+            if (captureFromInstance(container[prop])) return;
+          }
+        }
+
+        // Strategy 3: Fallback - scan all window properties
+        for (const key of Object.keys(window)) {
+          const obj = window[key];
+          if (captureFromInstance(obj)) return;
+        }
+
+        // No map found
         window.postMessage({ type: 'WEBMAP_ARCHIVER_CAPTURE', style: null }, '*');
       })();
     `;

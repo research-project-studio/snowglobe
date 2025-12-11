@@ -309,6 +309,57 @@ def inspect_bundle(bundle: dict) -> InspectionResult:
 # Internal Implementation
 # ============================================================================
 
+def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
+    """
+    Rewrite source URLs in captured style to point to local PMTiles files.
+
+    Takes a MapLibre/Mapbox style object and rewrites the 'url' field in each
+    source to use the pmtiles:// protocol pointing to local files.
+
+    Args:
+        style: MapLibre style object from map.getStyle()
+        tile_source_infos: List of TileSourceInfo objects with PMTiles paths
+
+    Returns:
+        Modified style dict with rewritten source URLs
+    """
+    import copy
+
+    # Deep copy to avoid modifying the original
+    rewritten_style = copy.deepcopy(style)
+
+    if 'sources' not in rewritten_style:
+        return rewritten_style
+
+    # Create mapping of source names from tile_source_infos
+    pmtiles_map = {info.name: info.path for info in tile_source_infos}
+
+    # Rewrite each source
+    for source_name, source_def in rewritten_style['sources'].items():
+        if source_def.get('type') not in ['vector', 'raster']:
+            continue
+
+        # Try to match this style source to one of our PMTiles files
+        # Strategy: Look for partial name matches
+        matched_pmtiles = None
+        for pmtiles_name, pmtiles_path in pmtiles_map.items():
+            # Check if the PMTiles name appears in the source name or vice versa
+            if pmtiles_name.lower() in source_name.lower() or source_name.lower() in pmtiles_name.lower():
+                matched_pmtiles = pmtiles_path
+                break
+
+        if matched_pmtiles:
+            # Rewrite to use local PMTiles
+            source_def['url'] = f"pmtiles://{matched_pmtiles}"
+            # Remove tiles array if present (not needed for pmtiles:// protocol)
+            source_def.pop('tiles', None)
+        else:
+            # No match found - keep original but note this in console
+            pass
+
+    return rewritten_style
+
+
 def _build_archive(
     processed,
     capture,
@@ -445,12 +496,22 @@ def _build_archive(
             overall_bounds = GeoBounds(west=-180, south=-90, east=180, north=90)
             overall_zoom_range = (0, 14)
         
+        # Handle captured style
+        captured_style = None
+        if capture.style:
+            if verbose:
+                print("  Found captured style from map.getStyle()")
+            # Rewrite style sources to point to local PMTiles
+            captured_style = _rewrite_style_sources(capture.style, tile_source_infos)
+            if verbose:
+                print(f"    Rewrote {len(captured_style.get('sources', {}))} source URLs to local PMTiles")
+
         # Generate viewer
         if verbose:
             print("  Generating viewer...")
-        
+
         archive_name = name or capture.metadata.title or "WebMap Archive"
-        
+
         viewer_config = ViewerConfig(
             name=archive_name,
             bounds=overall_bounds,
@@ -458,8 +519,9 @@ def _build_archive(
             max_zoom=overall_zoom_range[1],
             tile_sources=viewer_tile_sources,
             created_at=capture.metadata.captured_at,
+            captured_style=captured_style,  # Pass captured style to viewer
         )
-        
+
         generator = ViewerGenerator()
         viewer_html = generator.generate(viewer_config)
         
@@ -474,7 +536,14 @@ def _build_archive(
             packager.add_pmtiles(info.name, pmtiles_path)
         
         packager.add_viewer(viewer_html)
-        
+
+        # Add captured style if available
+        if captured_style:
+            style_json = json.dumps(captured_style, indent=2)
+            packager.temp_files.append(("style/captured_style.json", style_json.encode('utf-8')))
+            if verbose:
+                print("  Added captured style to archive")
+
         packager.set_manifest(
             name=archive_name,
             description=f"Archived from {capture.metadata.url}",

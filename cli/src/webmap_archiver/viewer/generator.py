@@ -29,6 +29,7 @@ class ViewerConfig:
     max_zoom: int
     tile_sources: list[dict]  # [{name, path, type, is_orphan}]
     created_at: str
+    captured_style: dict | None = None  # Full MapLibre style from map.getStyle()
 
 
 # Large HTML template - viewer with MapLibre GL JS and PMTiles support
@@ -108,27 +109,36 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         ];
         let colorIndex = 0;
 
-        // Build sources object
-        const sources = {{}};
-        config.tileSources.forEach(src => {{
-            sources[src.name] = {{
-                type: "vector",
-                url: "pmtiles://" + src.path
-            }};
-        }});
+        // Check if we have a captured style from map.getStyle()
+        let style;
+        if (config.capturedStyle) {{
+            console.log("[WebMap Archiver] Using captured style from map.getStyle()");
+            // Use the captured style directly - sources have been rewritten to local PMTiles
+            style = config.capturedStyle;
+        }} else {{
+            console.log("[WebMap Archiver] No captured style, generating default style");
+            // Build sources object
+            const sources = {{}};
+            config.tileSources.forEach(src => {{
+                sources[src.name] = {{
+                    type: "vector",
+                    url: "pmtiles://" + src.path
+                }};
+            }});
 
-        // Create style with layers for ALL sources
-        const style = {{
-            version: 8,
-            sources: sources,
-            layers: [
-                {{
-                    id: "background",
-                    type: "background",
-                    paint: {{ "background-color": "#1a1a2e" }}
-                }}
-            ]
-        }};
+            // Create style with layers for ALL sources
+            style = {{
+                version: 8,
+                sources: sources,
+                layers: [
+                    {{
+                        id: "background",
+                        type: "background",
+                        paint: {{ "background-color": "#1a1a2e" }}
+                    }}
+                ]
+            }};
+        }}
 
         // Track layers for toggle controls
         const layerGroups = {{}};
@@ -154,8 +164,9 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             return expr;
         }}
 
-        // Add layers for each source
-        config.tileSources.forEach((src, i) => {{
+        // Add layers for each source (only if not using captured style)
+        if (!config.capturedStyle) {{
+            config.tileSources.forEach((src, i) => {{
             const isDataLayer = src.isOrphan !== false;
             const extracted = src.extractedStyle;
             const layerIds = [];
@@ -300,7 +311,8 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
                 hasExtractedStyle: !!(extracted && extracted.colors && Object.keys(extracted.colors).length > 0),
                 sourceLayers: sourceLayers
             }};
-        }});
+            }});
+        }} // End if (!config.capturedStyle)
 
         const map = new maplibregl.Map({{
             container: "map",
@@ -386,6 +398,7 @@ class ViewerGenerator:
             "maxZoom": config.max_zoom,
             "tileSources": config.tile_sources,
             "createdAt": config.created_at,
+            "capturedStyle": config.captured_style,  # Include captured style if available
         }
 
         return VIEWER_TEMPLATE.format(
