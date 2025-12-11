@@ -1,15 +1,28 @@
 [build-system]
-requires = ["setuptools>=65.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "webmap-archiver"
-version = "0.1.0"
-description = "Transform HAR files into self-contained web map archives"
+version = "0.2.0"
+description = "Archive web maps as self-contained packages"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "WebMap Archiver Contributors"}
+    {name = "Research Project Studio"}
+]
+keywords = ["maps", "archive", "pmtiles", "webmap", "gis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
 ]
 
 dependencies = [
@@ -17,21 +30,44 @@ dependencies = [
     "pmtiles>=3.0",
     "pydantic>=2.0",
     "rich>=13.0",
+    "requests>=2.28",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "ruff>=0.1",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+server = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.25.0",
 ]
 
 [project.scripts]
 webmap-archive = "webmap_archiver.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/research-project-studio/snowglobe"
+Repository = "https://github.com/research-project-studio/snowglobe"
+Documentation = "https://github.com/research-project-studio/snowglobe#readme"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+webmap_archiver = ["templates/*", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

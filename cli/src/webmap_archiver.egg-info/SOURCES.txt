@@ -1,7 +1,10 @@
 README.md
 pyproject.toml
 src/webmap_archiver/__init__.py
+src/webmap_archiver/api.py
 src/webmap_archiver/cli.py
+src/webmap_archiver/modal_app.py
+src/webmap_archiver/py.typed
 src/webmap_archiver.egg-info/PKG-INFO
 src/webmap_archiver.egg-info/SOURCES.txt
 src/webmap_archiver.egg-info/dependency_links.txt
@@ -32,4 +35,5 @@ src/webmap_archiver/tiles/layer_inspector.py
 src/webmap_archiver/tiles/pmtiles.py
 src/webmap_archiver/viewer/__init__.py
 src/webmap_archiver/viewer/generator.py
+tests/test_api.py
 tests/test_integration.py
