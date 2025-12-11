@@ -87,6 +87,27 @@ def fastapi_app():
         try:
             # Parse and validate the capture bundle
             print("Parsing capture bundle...")
+            print(f"  Bundle keys: {list(bundle.keys())}")
+            print(f"  Tiles count: {len(bundle.get('tiles', []))}")
+            print(
+                f"  HAR entries: {len(bundle.get('har', {}).get('log', {}).get('entries', []))}"
+            )
+
+            # Log sample tile info
+            if bundle.get("tiles"):
+                sample_tile = bundle["tiles"][0]
+                print(
+                    f"  Sample tile: z={sample_tile.get('z')}, source={sample_tile.get('source')}"
+                )
+
+            # Log sample HAR entry URLs
+            har_entries = bundle.get("har", {}).get("log", {}).get("entries", [])
+            if har_entries:
+                sample_urls = [
+                    e.get("request", {}).get("url", "")[:60] for e in har_entries[:5]
+                ]
+                print(f"  Sample HAR URLs: {sample_urls}")
+
             parser = CaptureParser()
             capture = parser._build_bundle(bundle)
 
@@ -100,6 +121,14 @@ def fastapi_app():
             print(
                 f"  - Total tiles: {sum(len(t) for t in processed.tiles_by_source.values())}"
             )
+
+            # Log sample tile source info
+            for source_name, tiles in processed.tiles_by_source.items():
+                if tiles:
+                    coord, _ = tiles[0]
+                    print(
+                        f"    Source '{source_name}': {len(tiles)} tiles, sample coord: z{coord.z}/{coord.x}/{coord.y}"
+                    )
 
             # Generate archive ID and filename
             archive_id = str(uuid.uuid4())[:8]
@@ -331,6 +360,16 @@ def _prepare_style(processed, capture, source_info):
             )
             return extracted_style
 
+    # Also try from the raw bundle's har if it's different
+    if hasattr(capture, "_raw_har") and capture._raw_har:
+        extracted_style = _extract_style_from_har(capture._raw_har)
+        if extracted_style:
+            extracted_style = _rewrite_style_sources(extracted_style, source_info)
+            print(
+                f"  Extracted style from raw HAR with {len(extracted_style.get('layers', []))} layers"
+            )
+            return extracted_style
+
     # Generate a basic style for vector tiles
     print("  Generating basic fallback style")
     return _generate_basic_style(source_info)
@@ -338,14 +377,34 @@ def _prepare_style(processed, capture, source_info):
 
 def _extract_style_from_har(har) -> dict | None:
     """Extract style.json from HAR entries."""
-    if not har or not hasattr(har, "log") or not har.log:
+    print("  Attempting to extract style from HAR...")
+
+    if not har:
+        print("  No HAR data provided")
         return None
 
-    entries = (
-        har.log.entries if hasattr(har.log, "entries") else har.log.get("entries", [])
-    )
+    # Handle different HAR structures
+    if hasattr(har, "log"):
+        log = har.log
+    elif isinstance(har, dict) and "log" in har:
+        log = har["log"]
+    else:
+        print(f"  Unexpected HAR structure: {type(har)}")
+        return None
 
-    for entry in entries:
+    if hasattr(log, "entries"):
+        entries = log.entries
+    elif isinstance(log, dict) and "entries" in log:
+        entries = log["entries"]
+    else:
+        print(f"  No entries in HAR log")
+        return None
+
+    print(f"  Scanning {len(entries)} HAR entries for style...")
+
+    style_candidates = []
+
+    for i, entry in enumerate(entries):
         # Get URL from entry
         if hasattr(entry, "request"):
             url = (
@@ -353,11 +412,23 @@ def _extract_style_from_har(har) -> dict | None:
                 if hasattr(entry.request, "url")
                 else entry.request.get("url", "")
             )
-        else:
+        elif isinstance(entry, dict):
             url = entry.get("request", {}).get("url", "")
+        else:
+            continue
 
         # Check if this looks like a style request
-        if "style.json" in url or "/styles/" in url or "style" in url.lower():
+        is_style = (
+            "style.json" in url
+            or "style?" in url
+            or "/styles/" in url
+            or "maps/streets" in url
+            or "/gl/style" in url
+        )
+
+        if is_style:
+            print(f"  Found potential style URL: {url[:80]}...")
+
             # Get response content
             if hasattr(entry, "response"):
                 response = entry.response
@@ -366,30 +437,34 @@ def _extract_style_from_har(har) -> dict | None:
                     if hasattr(response, "content")
                     else response.get("content", {})
                 )
-            else:
+            elif isinstance(entry, dict):
                 content = entry.get("response", {}).get("content", {})
+            else:
+                continue
 
             # Get the text content
-            text = content.text if hasattr(content, "text") else content.get("text")
-            encoding = (
-                content.encoding
-                if hasattr(content, "encoding")
-                else content.get("encoding")
-            )
-            mime_type = (
-                content.mimeType
-                if hasattr(content, "mimeType")
-                else content.get("mimeType", "")
-            )
+            if hasattr(content, "text"):
+                text = content.text
+                encoding = getattr(content, "encoding", None)
+                mime_type = getattr(content, "mimeType", "")
+            elif isinstance(content, dict):
+                text = content.get("text")
+                encoding = content.get("encoding")
+                mime_type = content.get("mimeType", "")
+            else:
+                continue
 
             if not text:
+                print(f"    No text content in response")
                 continue
 
             # Decode if base64
             if encoding == "base64":
                 try:
                     text = base64.b64decode(text).decode("utf-8")
-                except:
+                    print(f"    Decoded base64 content ({len(text)} chars)")
+                except Exception as e:
+                    print(f"    Failed to decode base64: {e}")
                     continue
 
             # Try to parse as JSON
@@ -397,12 +472,29 @@ def _extract_style_from_har(har) -> dict | None:
                 try:
                     style = json.loads(text)
                     # Validate it looks like a MapLibre style
-                    if "version" in style and "layers" in style:
-                        print(f"  Found style in HAR: {url[:80]}")
-                        return style
-                except json.JSONDecodeError:
+                    if "version" in style and ("layers" in style or "sources" in style):
+                        print(
+                            f"    ✓ Valid MapLibre style found with {len(style.get('layers', []))} layers"
+                        )
+                        style_candidates.append(
+                            (url, style, len(style.get("layers", [])))
+                        )
+                    else:
+                        print(
+                            f"    JSON found but not a valid style (keys: {list(style.keys())[:5]})"
+                        )
+                except json.JSONDecodeError as e:
+                    print(f"    JSON parse error: {e}")
                     continue
 
+    # Return the style with the most layers (usually the main one)
+    if style_candidates:
+        style_candidates.sort(key=lambda x: x[2], reverse=True)
+        best_url, best_style, layer_count = style_candidates[0]
+        print(f"  Selected style from {best_url[:60]}... ({layer_count} layers)")
+        return best_style
+
+    print("  No style found in HAR entries")
     return None
 
 
@@ -525,12 +617,28 @@ def _get_viewport(capture, source_info: dict) -> dict:
     for info in source_info.values():
         bounds = info.get("bounds")
         if bounds:
-            center_lng = (bounds[0] + bounds[2]) / 2
-            center_lat = (bounds[1] + bounds[3]) / 2
-            return {
-                "center": [center_lng, center_lat],
-                "zoom": (info["min_zoom"] + info["max_zoom"]) // 2,
-            }
+            # Handle GeoBounds object - try different attribute names
+            try:
+                if hasattr(bounds, "west"):
+                    center_lng = (bounds.west + bounds.east) / 2
+                    center_lat = (bounds.south + bounds.north) / 2
+                elif hasattr(bounds, "min_lon"):
+                    center_lng = (bounds.min_lon + bounds.max_lon) / 2
+                    center_lat = (bounds.min_lat + bounds.max_lat) / 2
+                elif hasattr(bounds, "__getitem__"):
+                    # It's a list/tuple: [west, south, east, north]
+                    center_lng = (bounds[0] + bounds[2]) / 2
+                    center_lat = (bounds[1] + bounds[3]) / 2
+                else:
+                    continue
+
+                return {
+                    "center": [center_lng, center_lat],
+                    "zoom": (info["min_zoom"] + info["max_zoom"]) // 2,
+                }
+            except Exception as e:
+                print(f"  Warning: Could not parse bounds: {e}")
+                continue
 
     # Default
     return {"center": [0, 0], "zoom": 2}
