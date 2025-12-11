@@ -15,6 +15,7 @@ from .api import (
     create_archive_from_har,
     inspect_bundle,
     normalize_bundle,
+    validate_pmtiles,
     ArchiveResult,
     TileSourceResult,
     InspectionResult,
@@ -30,6 +31,7 @@ __all__ = [
     "create_archive_from_har",
     "inspect_bundle",
     "normalize_bundle",
+    "validate_pmtiles",
     # Result types
     "ArchiveResult",
     "TileSourceResult",

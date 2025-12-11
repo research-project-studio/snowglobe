@@ -70,6 +70,14 @@ class PMTilesBuilder:
             }
             tile_type = format_map.get(self.metadata.format, TileType.PNG)
 
+        # VALIDATION: Check sample tile content
+        sample_coord, sample_data = self.tiles[0]
+        print(f"  [PMTiles] Sample tile z{sample_coord.z}/{sample_coord.x}/{sample_coord.y}")
+        print(f"    Size: {len(sample_data)} bytes")
+        print(f"    First 10 bytes: {sample_data[:10].hex()}")
+        print(f"    Is gzipped: {len(sample_data) >= 2 and sample_data[:2] == b'\\x1f\\x8b'}")
+        print(f"    Tile type: {tile_type.name}")
+
         # Open writer
         with open(self.output_path, 'wb') as f:
             writer = Writer(f)
@@ -106,13 +114,25 @@ class PMTilesBuilder:
             writer.finalize(header, json_metadata)
 
     def _ensure_gzipped(self, data: bytes) -> bytes:
-        """Ensure data is gzipped."""
-        # Check if already gzipped (magic bytes)
-        if data[:2] == b'\x1f\x8b':
-            return data
+        """
+        Ensure data is gzipped exactly once.
 
-        # Gzip the data
+        CRITICAL: Network-captured tiles may already be gzipped.
+        Double-gzipping corrupts the data and prevents tiles from loading.
+        """
+        # Check if already gzipped (magic bytes: 0x1f 0x8b)
+        if len(data) >= 2 and data[:2] == b'\x1f\x8b':
+            # Validate it's actually valid gzip by attempting decompression
+            try:
+                gzip.decompress(data)
+                # Valid gzip - return as-is to avoid double compression
+                return data
+            except Exception:
+                # Not valid gzip despite magic bytes - fall through to compress it
+                pass
+
+        # Not gzipped - compress it
         buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
+        with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as gz:
             gz.write(data)
         return buf.getvalue()

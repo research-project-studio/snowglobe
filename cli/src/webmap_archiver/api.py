@@ -624,3 +624,116 @@ def _entries_to_har_format(entries) -> list[dict]:
             }
         })
     return result
+
+
+# ============================================================================
+# Diagnostic Functions
+# ============================================================================
+
+def validate_pmtiles(path: Path) -> dict:
+    """
+    Validate a PMTiles file and return diagnostic information.
+
+    This function reads a PMTiles file and extracts key information useful
+    for debugging loading issues in viewers like pmtiles.io.
+
+    Args:
+        path: Path to the PMTiles file
+
+    Returns:
+        Dictionary with diagnostic information including:
+        - valid: Whether the file could be read
+        - tile_type: The type of tiles (MVT, PNG, etc.)
+        - tile_compression: Compression method used
+        - min_zoom, max_zoom: Zoom range
+        - bounds: Geographic bounds
+        - tile_count: Number of tiles in the archive
+        - sample_tile_info: Information about the first tile (for debugging)
+    """
+    from pmtiles.reader import Reader
+    from pmtiles.tile import TileType, Compression
+
+    try:
+        # Open the file and create a get_bytes function
+        with open(path, 'rb') as f:
+            file_data = f.read()
+
+        def get_bytes(offset, length):
+            return file_data[offset:offset + length]
+
+        reader = Reader(get_bytes)
+
+        # Read header
+        header = reader.header()
+
+        # Read metadata
+        try:
+            metadata = json.loads(reader.metadata())
+        except:
+            metadata = {}
+
+        # Get a sample tile
+        sample_tile_info = None
+        try:
+            # Try to get the first tile
+            for entry in reader.entries():
+                tile_id = entry[0]
+                tile_offset = entry[1]
+                tile_length = entry[2]
+
+                # Read tile data
+                tile_data = reader.get_tile(tile_id)
+                if tile_data:
+                    sample_tile_info = {
+                        "tile_id": tile_id,
+                        "size": len(tile_data),
+                        "first_10_bytes": tile_data[:10].hex(),
+                        "is_gzipped": len(tile_data) >= 2 and tile_data[:2] == b'\x1f\x8b',
+                    }
+                    break
+        except Exception as e:
+            sample_tile_info = {"error": str(e)}
+
+        # Tile type names
+        tile_type_names = {
+            TileType.UNKNOWN: "Unknown",
+            TileType.MVT: "MVT (Vector)",
+            TileType.PNG: "PNG",
+            TileType.JPEG: "JPEG",
+            TileType.WEBP: "WebP",
+        }
+
+        compression_names = {
+            Compression.UNKNOWN: "Unknown",
+            Compression.NONE: "None",
+            Compression.GZIP: "Gzip",
+            Compression.BROTLI: "Brotli",
+            Compression.ZSTD: "Zstandard",
+        }
+
+        return {
+            "valid": True,
+            "tile_type": tile_type_names.get(header["tile_type"], "Unknown"),
+            "tile_compression": compression_names.get(header["tile_compression"], "Unknown"),
+            "min_zoom": header["min_zoom"],
+            "max_zoom": header["max_zoom"],
+            "bounds": {
+                "west": header["min_lon_e7"] / 1e7,
+                "south": header["min_lat_e7"] / 1e7,
+                "east": header["max_lon_e7"] / 1e7,
+                "north": header["max_lat_e7"] / 1e7,
+            },
+            "center": {
+                "lon": header["center_lon_e7"] / 1e7,
+                "lat": header["center_lat_e7"] / 1e7,
+                "zoom": header["center_zoom"],
+            },
+            "tile_count": header.get("addressed_tiles_count", 0),
+            "metadata": metadata,
+            "sample_tile": sample_tile_info,
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e),
+        }
