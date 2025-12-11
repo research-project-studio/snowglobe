@@ -452,7 +452,7 @@
         z: r.tileCoords!.z,
         x: r.tileCoords!.x,
         y: r.tileCoords!.y,
-        source: r.tileSource || "tiles", // Python expects 'source', not 'source_id'
+        sourceId: r.tileSource || "tiles",
         data: r.body!, // base64-encoded
         format: r.mimeType.includes("png")
           ? "png"
