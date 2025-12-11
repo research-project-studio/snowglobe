@@ -39,11 +39,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "GET_TAB_STATE":
       if (message.tabId) {
         const mapState = tabMapState.get(message.tabId);
-        const captureState = tabCaptureState.get(message.tabId) || { status: "idle" };
+        const captureState = tabCaptureState.get(message.tabId) || {
+          status: "idle",
+        };
         sendResponse({
           maps: mapState || { count: 0, types: [] },
           capture: captureState,
         });
+      }
+      break;
+
+    case "EXECUTE_CAPTURE_SCRIPT":
+      if (message.tabId) {
+        // Execute the capture script in the tab
+        chrome.scripting
+          .executeScript({
+            target: { tabId: message.tabId },
+            func: () => {
+              // This runs in the page context with access to window
+              const maps = (window as any).__webmapArchiver?.detectedMaps || [];
+              if (maps.length === 0) return null;
+
+              const mapInstance = maps[0]?.instance;
+              if (!mapInstance) return null;
+
+              try {
+                return {
+                  style:
+                    typeof mapInstance.getStyle === "function"
+                      ? mapInstance.getStyle()
+                      : null,
+                  viewport: {
+                    center: mapInstance.getCenter?.() || { lng: 0, lat: 0 },
+                    zoom: mapInstance.getZoom?.() || 10,
+                    bounds: mapInstance.getBounds?.() || null,
+                    bearing: mapInstance.getBearing?.() || 0,
+                    pitch: mapInstance.getPitch?.() || 0,
+                  },
+                  mapLibrary: maps[0]?.type
+                    ? { type: maps[0].type, version: maps[0].version }
+                    : null,
+                };
+              } catch (e) {
+                console.error("Error capturing map state:", e);
+                return null;
+              }
+            },
+          })
+          .then((results) => {
+            sendResponse(results?.[0]?.result || null);
+          })
+          .catch((e) => {
+            console.error("Script execution failed:", e);
+            sendResponse(null);
+          });
+        return true; // Async response
       }
       break;
 
@@ -187,7 +237,10 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.warn(`[WebMap Archiver] ${endpoint} returned ${response.status}:`, errorText);
+        console.warn(
+          `[WebMap Archiver] ${endpoint} returned ${response.status}:`,
+          errorText
+        );
         continue;
       }
 
@@ -199,9 +252,8 @@ async function processCapture(bundle: CaptureBundle): Promise<ProcessResult> {
         let downloadUrl = result.downloadUrl;
         if (downloadUrl && downloadUrl.startsWith("/")) {
           const endpointUrl = new URL(endpoint);
-          const baseUrl = `${endpointUrl.protocol}//${endpointUrl.host}`;
-          downloadUrl = `${baseUrl}${downloadUrl}`;
-          console.log(`[WebMap Archiver] Fixed URL: ${downloadUrl}`);
+          downloadUrl = `${endpointUrl.protocol}//${endpointUrl.host}${downloadUrl}`;
+          console.log(`[WebMap Archiver] Fixed download URL: ${downloadUrl}`);
         }
 
         return {

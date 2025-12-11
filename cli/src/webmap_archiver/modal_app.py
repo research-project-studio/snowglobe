@@ -15,8 +15,9 @@ import modal
 import json
 import tempfile
 import uuid
+import base64
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Define the Modal app
 app = modal.App("webmap-archiver")
@@ -85,11 +86,20 @@ def fastapi_app():
         """
         try:
             # Parse and validate the capture bundle
+            print("Parsing capture bundle...")
             parser = CaptureParser()
             capture = parser._build_bundle(bundle)
 
             # Process into intermediate form
+            print("Processing capture bundle...")
             processed = process_capture_bundle(capture)
+
+            # Log what we got
+            print(f"  - Style present: {processed.style is not None}")
+            print(f"  - Tile sources: {list(processed.tiles_by_source.keys())}")
+            print(
+                f"  - Total tiles: {sum(len(t) for t in processed.tiles_by_source.values())}"
+            )
 
             # Generate archive ID and filename
             archive_id = str(uuid.uuid4())[:8]
@@ -98,8 +108,9 @@ def fastapi_app():
             )
             output_path = Path(VOLUME_PATH) / f"{archive_id}.zip"
 
-            # Build the archive using simplified approach
-            _build_simple_archive(processed, output_path, capture)
+            # Build the archive with viewer
+            print("Building archive...")
+            _build_archive_with_viewer(processed, output_path, capture)
 
             # Get file size
             size = output_path.stat().st_size
@@ -108,10 +119,10 @@ def fastapi_app():
             volume.commit()
 
             # Calculate expiry (24 hours from now)
-            expires_at = datetime.utcnow() + timedelta(hours=24)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
 
             # Get the app URL for download
-            # This will be filled in by Modal after deployment
+            print("Preparing download URL...")
             download_url = f"/download/{archive_id}"
 
             return {
@@ -124,8 +135,15 @@ def fastapi_app():
             }
 
         except CaptureValidationError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid capture bundle: {str(e)}")
+            print(f"Validation error: {e}")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid capture bundle: {str(e)}"
+            )
         except Exception as e:
+            print(f"Processing error: {e}")
+            import traceback
+
+            traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
     @web_app.get("/download/{archive_id}")
@@ -160,9 +178,9 @@ def _generate_filename(url: str, captured_at: str) -> str:
     return f"{host}-{date}.zip"
 
 
-def _build_simple_archive(processed, output_path: Path, capture):
+def _build_archive_with_viewer(processed, output_path: Path, capture):
     """
-    Build a simple archive ZIP file with PMTiles and viewer.
+    Build a complete archive ZIP file with PMTiles, style, and viewer.
     """
     from webmap_archiver.tiles.pmtiles import PMTilesBuilder, PMTilesMetadata
     from webmap_archiver.tiles.coverage import CoverageCalculator
@@ -171,13 +189,18 @@ def _build_simple_archive(processed, output_path: Path, capture):
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         pmtiles_files = []
+        source_info = {}  # Track info about each source for the viewer
 
         # Build PMTiles for each source
         for source_name, tiles in processed.tiles_by_source.items():
             if not tiles:
                 continue
 
-            pmtiles_path = temp_path / f"{source_name}.pmtiles"
+            # Clean up source name for filename
+            safe_name = source_name.replace("/", "-").replace("\\", "-") or "tiles"
+            print(f"  Building PMTiles for source: {source_name} ({len(tiles)} tiles)")
+
+            pmtiles_path = temp_path / f"{safe_name}.pmtiles"
             builder = PMTilesBuilder(pmtiles_path)
 
             for coord, content in tiles:
@@ -196,7 +219,7 @@ def _build_simple_archive(processed, output_path: Path, capture):
 
             builder.set_metadata(
                 PMTilesMetadata(
-                    name=source_name,
+                    name=safe_name,
                     description=f"Tiles from {capture.metadata.url}",
                     bounds=bounds,
                     min_zoom=zoom_range[0],
@@ -207,7 +230,21 @@ def _build_simple_archive(processed, output_path: Path, capture):
             )
 
             builder.build()
-            pmtiles_files.append((source_name, pmtiles_path))
+            pmtiles_files.append((safe_name, pmtiles_path))
+            source_info[source_name] = {
+                "filename": f"{safe_name}.pmtiles",
+                "bounds": bounds,
+                "min_zoom": zoom_range[0],
+                "max_zoom": zoom_range[1],
+                "tile_type": tile_type,
+                "format": tile_format,
+            }
+
+        # Extract or build style
+        style = _prepare_style(processed, capture, source_info)
+
+        # Calculate viewport from tiles or capture
+        viewport = _get_viewport(capture, source_info)
 
         # Create ZIP file
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -215,17 +252,37 @@ def _build_simple_archive(processed, output_path: Path, capture):
             for name, path in pmtiles_files:
                 zf.write(path, f"tiles/{name}.pmtiles")
 
+            # Add style.json
+            if style:
+                zf.writestr("style.json", json.dumps(style, indent=2))
+                print(f"  Added style.json")
+
+            # Add viewer.html
+            viewer_html = _generate_viewer_html(
+                title=capture.metadata.title or "WebMap Archive",
+                style=style,
+                viewport=viewport,
+                pmtiles_sources=source_info,
+            )
+            zf.writestr("viewer.html", viewer_html)
+            print(f"  Added viewer.html")
+
             # Add manifest
             manifest = {
                 "version": "1.0",
-                "created_at": datetime.utcnow().isoformat() + "Z",
+                "created_at": datetime.now(timezone.utc).isoformat() + "Z",
                 "source_url": capture.metadata.url,
                 "title": capture.metadata.title,
-                "tile_count": sum(len(tiles) for tiles in processed.tiles_by_source.values()),
+                "tile_sources": list(source_info.keys()),
+                "tile_count": sum(
+                    len(tiles) for tiles in processed.tiles_by_source.values()
+                ),
+                "has_style": style is not None,
+                "viewport": viewport,
             }
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
-            # Add simple README
+            # Add README
             readme = f"""# WebMap Archive
 
 Source: {capture.metadata.url}
@@ -234,14 +291,368 @@ Captured: {capture.metadata.captured_at}
 
 ## Contents
 
+- viewer.html: Self-contained map viewer (open in browser)
+- style.json: Map style definition
 - tiles/: PMTiles archives
 - manifest.json: Archive metadata
 
 ## Usage
 
-Extract this archive and use the PMTiles files with any PMTiles-compatible viewer.
+1. Extract this archive
+2. Open viewer.html in a web browser
+3. The map should display automatically
+
+Alternatively, use the PMTiles files with any PMTiles-compatible viewer.
 """
             zf.writestr("README.txt", readme)
+
+        print(f"  Archive created: {output_path}")
+
+
+def _prepare_style(processed, capture, source_info):
+    """
+    Prepare the map style, either from captured style or generate a basic one.
+    """
+    style = processed.style
+
+    if style:
+        # Rewrite source URLs to point to local PMTiles
+        style = _rewrite_style_sources(style, source_info)
+        print(f"  Using captured style with {len(style.get('layers', []))} layers")
+        return style
+
+    # Try to extract style from HAR
+    if capture.har:
+        extracted_style = _extract_style_from_har(capture.har)
+        if extracted_style:
+            extracted_style = _rewrite_style_sources(extracted_style, source_info)
+            print(
+                f"  Extracted style from HAR with {len(extracted_style.get('layers', []))} layers"
+            )
+            return extracted_style
+
+    # Generate a basic style for vector tiles
+    print("  Generating basic fallback style")
+    return _generate_basic_style(source_info)
+
+
+def _extract_style_from_har(har) -> dict | None:
+    """Extract style.json from HAR entries."""
+    if not har or not hasattr(har, "log") or not har.log:
+        return None
+
+    entries = (
+        har.log.entries if hasattr(har.log, "entries") else har.log.get("entries", [])
+    )
+
+    for entry in entries:
+        # Get URL from entry
+        if hasattr(entry, "request"):
+            url = (
+                entry.request.url
+                if hasattr(entry.request, "url")
+                else entry.request.get("url", "")
+            )
+        else:
+            url = entry.get("request", {}).get("url", "")
+
+        # Check if this looks like a style request
+        if "style.json" in url or "/styles/" in url or "style" in url.lower():
+            # Get response content
+            if hasattr(entry, "response"):
+                response = entry.response
+                content = (
+                    response.content
+                    if hasattr(response, "content")
+                    else response.get("content", {})
+                )
+            else:
+                content = entry.get("response", {}).get("content", {})
+
+            # Get the text content
+            text = content.text if hasattr(content, "text") else content.get("text")
+            encoding = (
+                content.encoding
+                if hasattr(content, "encoding")
+                else content.get("encoding")
+            )
+            mime_type = (
+                content.mimeType
+                if hasattr(content, "mimeType")
+                else content.get("mimeType", "")
+            )
+
+            if not text:
+                continue
+
+            # Decode if base64
+            if encoding == "base64":
+                try:
+                    text = base64.b64decode(text).decode("utf-8")
+                except:
+                    continue
+
+            # Try to parse as JSON
+            if "json" in mime_type or text.strip().startswith("{"):
+                try:
+                    style = json.loads(text)
+                    # Validate it looks like a MapLibre style
+                    if "version" in style and "layers" in style:
+                        print(f"  Found style in HAR: {url[:80]}")
+                        return style
+                except json.JSONDecodeError:
+                    continue
+
+    return None
+
+
+def _rewrite_style_sources(style: dict, source_info: dict) -> dict:
+    """Rewrite style source URLs to point to local PMTiles files."""
+    style = json.loads(json.dumps(style))  # Deep copy
+
+    if "sources" not in style:
+        return style
+
+    for source_name, source_def in style["sources"].items():
+        source_type = source_def.get("type", "")
+
+        if source_type == "vector":
+            # Find matching PMTiles file
+            pmtiles_file = None
+            for captured_name, info in source_info.items():
+                if source_name in captured_name or captured_name in source_name:
+                    pmtiles_file = info["filename"]
+                    break
+
+            # Default to first PMTiles if no match
+            if not pmtiles_file and source_info:
+                pmtiles_file = list(source_info.values())[0]["filename"]
+
+            if pmtiles_file:
+                # Use PMTiles protocol
+                source_def["url"] = f"pmtiles://tiles/{pmtiles_file}"
+                # Remove tiles array if present
+                source_def.pop("tiles", None)
+
+        elif source_type == "raster":
+            # Similar handling for raster tiles
+            for captured_name, info in source_info.items():
+                if info["tile_type"] == "raster":
+                    source_def["url"] = f"pmtiles://tiles/{info['filename']}"
+                    source_def.pop("tiles", None)
+                    break
+
+    return style
+
+
+def _generate_basic_style(source_info: dict) -> dict:
+    """Generate a basic MapLibre style for the captured tiles."""
+    sources = {}
+    layers = []
+
+    for source_name, info in source_info.items():
+        safe_id = source_name.replace("-", "_").replace(".", "_")
+
+        sources[safe_id] = {
+            "type": "vector" if info["tile_type"] == "vector" else "raster",
+            "url": f"pmtiles://tiles/{info['filename']}",
+        }
+
+        if info["tile_type"] == "vector":
+            # Add basic vector layers
+            layers.extend(
+                [
+                    {
+                        "id": f"{safe_id}_fill",
+                        "type": "fill",
+                        "source": safe_id,
+                        "source-layer": "default",
+                        "paint": {
+                            "fill-color": "#e0e0e0",
+                            "fill-opacity": 0.5,
+                        },
+                    },
+                    {
+                        "id": f"{safe_id}_line",
+                        "type": "line",
+                        "source": safe_id,
+                        "source-layer": "default",
+                        "paint": {
+                            "line-color": "#666666",
+                            "line-width": 1,
+                        },
+                    },
+                ]
+            )
+        else:
+            # Raster layer
+            layers.append(
+                {
+                    "id": f"{safe_id}_raster",
+                    "type": "raster",
+                    "source": safe_id,
+                }
+            )
+
+    return {
+        "version": 8,
+        "name": "WebMap Archive",
+        "sources": sources,
+        "layers": [
+            # Background
+            {
+                "id": "background",
+                "type": "background",
+                "paint": {"background-color": "#f8f8f8"},
+            },
+            *layers,
+        ],
+    }
+
+
+def _get_viewport(capture, source_info: dict) -> dict:
+    """Get viewport from capture or calculate from tile bounds."""
+    # Try capture viewport first
+    if capture.viewport:
+        center = capture.viewport.center
+        if center and center != (0, 0) and center != [0, 0]:
+            return {
+                "center": list(center) if hasattr(center, "__iter__") else [0, 0],
+                "zoom": capture.viewport.zoom or 10,
+            }
+
+    # Calculate from tile bounds
+    for info in source_info.values():
+        bounds = info.get("bounds")
+        if bounds:
+            center_lng = (bounds[0] + bounds[2]) / 2
+            center_lat = (bounds[1] + bounds[3]) / 2
+            return {
+                "center": [center_lng, center_lat],
+                "zoom": (info["min_zoom"] + info["max_zoom"]) // 2,
+            }
+
+    # Default
+    return {"center": [0, 0], "zoom": 2}
+
+
+def _generate_viewer_html(
+    title: str, style: dict, viewport: dict, pmtiles_sources: dict
+) -> str:
+    """Generate a self-contained HTML viewer."""
+
+    # Encode style as JSON for embedding
+    style_json = json.dumps(style) if style else "{}"
+    viewport_json = json.dumps(viewport)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet">
+    <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+    <style>
+        body {{ margin: 0; padding: 0; }}
+        #map {{ position: absolute; top: 0; bottom: 0; width: 100%; }}
+        .info-panel {{
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 13px;
+            z-index: 1000;
+            max-width: 300px;
+        }}
+        .info-panel h3 {{
+            margin: 0 0 8px 0;
+            font-size: 14px;
+        }}
+        .info-panel p {{
+            margin: 4px 0;
+            color: #666;
+        }}
+        .info-panel .close {{
+            position: absolute;
+            top: 5px;
+            right: 8px;
+            cursor: pointer;
+            color: #999;
+        }}
+        .error-panel {{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff3f3;
+            border: 1px solid #ffcdd2;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        }}
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="info-panel" id="info">
+        <span class="close" onclick="this.parentElement.style.display='none'">&times;</span>
+        <h3>📍 {title}</h3>
+        <p>This is an archived web map.</p>
+        <p>Pan and zoom to explore.</p>
+    </div>
+
+    <script>
+        // Register PMTiles protocol
+        const protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        // Style and viewport from archive
+        const style = {style_json};
+        const viewport = {viewport_json};
+
+        // Initialize map
+        try {{
+            const map = new maplibregl.Map({{
+                container: 'map',
+                style: style,
+                center: viewport.center || [0, 0],
+                zoom: viewport.zoom || 10,
+                attributionControl: true,
+            }});
+
+            map.addControl(new maplibregl.NavigationControl(), 'top-right');
+            
+            map.on('error', function(e) {{
+                console.error('Map error:', e);
+            }});
+
+            // Log when style loads
+            map.on('load', function() {{
+                console.log('Map loaded successfully');
+                console.log('Sources:', Object.keys(map.getStyle().sources));
+                console.log('Layers:', map.getStyle().layers.length);
+            }});
+
+        }} catch (e) {{
+            console.error('Failed to initialize map:', e);
+            document.getElementById('map').innerHTML = 
+                '<div class="error-panel">' +
+                '<h3>⚠️ Error Loading Map</h3>' +
+                '<p>' + e.message + '</p>' +
+                '<p>Make sure all files are extracted and you\\'re viewing this from a web server.</p>' +
+                '</div>';
+        }}
+    </script>
+</body>
+</html>
+"""
 
 
 # ============================================================================
@@ -258,13 +669,13 @@ def cleanup_old_archives():
     """Remove archives older than 24 hours."""
     import os
 
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     removed = 0
 
     for filename in os.listdir(VOLUME_PATH):
         filepath = Path(VOLUME_PATH) / filename
         if filepath.suffix == ".zip":
-            mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+            mtime = datetime.fromtimestamp(filepath.stat().st_mtime, tz=timezone.utc)
             if mtime < cutoff:
                 filepath.unlink()
                 removed += 1
