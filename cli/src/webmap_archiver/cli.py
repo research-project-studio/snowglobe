@@ -84,6 +84,24 @@ def build_archive_from_tiles(
         source_bounds = coverage_calc.calculate_bounds(coords)
         source_zoom = coverage_calc.get_zoom_range(coords)
 
+        # Discover layer names from tile content BEFORE building (for vector tiles)
+        vector_layers_metadata = None
+        if source.tile_type == "vector":
+            layer_names = discover_layers_from_tiles(tiles)
+            discovered_layers[source_name] = layer_names
+            if layer_names:
+                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
+                # Format as TileJSON vector_layers spec
+                vector_layers_metadata = [
+                    {
+                        "id": layer_name,
+                        "fields": {},  # Could be enhanced to discover fields
+                        "minzoom": source_zoom[0],
+                        "maxzoom": source_zoom[1],
+                    }
+                    for layer_name in layer_names
+                ]
+
         builder.set_metadata(PMTilesMetadata(
             name=source_name,
             description=f"Tiles from {source.url_template}",
@@ -92,17 +110,10 @@ def build_archive_from_tiles(
             max_zoom=source_zoom[1],
             tile_type=source.tile_type,
             format=source.format,
+            vector_layers=vector_layers_metadata,
         ))
 
         builder.build()
-
-        # Discover layer names from tile content (only for vector tiles)
-        if source.tile_type == "vector":
-            layers = discover_layers_from_tiles(tiles)
-            layer_names = list(layers.keys())
-            discovered_layers[source_name] = layer_names
-            if layer_names:
-                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
 
         info = TileSourceInfo(
             name=source_name,
@@ -649,6 +660,26 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
         source_bounds = coverage_calc.calculate_bounds(source_coords)
         source_zoom = coverage_calc.get_zoom_range(source_coords)
 
+        # Discover layer names from tile content BEFORE building (for vector tiles)
+        vector_layers_metadata = None
+        if source.tile_type == "vector":
+            layer_names = discover_layers_from_tiles(all_tiles)
+            discovered_layers[source.name] = layer_names
+            if layer_names:
+                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
+                # Format as TileJSON vector_layers spec
+                vector_layers_metadata = [
+                    {
+                        "id": layer_name,
+                        "fields": {},  # Could be enhanced to discover fields
+                        "minzoom": source_zoom[0],
+                        "maxzoom": source_zoom[1],
+                    }
+                    for layer_name in layer_names
+                ]
+            else:
+                console.print(f"  [yellow]⚠ Could not discover layer names from tile content[/]")
+
         builder.set_metadata(PMTilesMetadata(
             name=source.name,
             description=f"Tiles from {source.url_template}",
@@ -657,19 +688,10 @@ def create(har_file: Path, output: Path | None, name: str | None, verbose: bool,
             max_zoom=source_zoom[1],
             tile_type=source.tile_type,
             format=source.format,
+            vector_layers=vector_layers_metadata,
         ))
 
         builder.build()
-        
-        # Discover layer names from tile content (only for vector tiles)
-        if source.tile_type == "vector":
-            layers = discover_layers_from_tiles(all_tiles)
-            layer_names = list(layers.keys())
-            discovered_layers[source.name] = layer_names
-            if layer_names:
-                console.print(f"  ✓ Discovered layers: [cyan]{', '.join(layer_names)}[/]")
-            else:
-                console.print(f"  [yellow]⚠ Could not discover layer names from tile content[/]")
 
         info = TileSourceInfo(
             name=source.name,

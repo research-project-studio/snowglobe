@@ -369,7 +369,20 @@ def _build_archive(
             source = processed.tile_sources.get(source_name)
             tile_type = source.tile_type if source else "vector"
             tile_format = source.format if source else "pbf"
-            
+
+            # Format vector layers as TileJSON spec
+            vector_layers_metadata = None
+            if tile_type == "vector" and discovered_layers:
+                vector_layers_metadata = [
+                    {
+                        "id": layer_name,
+                        "fields": {},  # Could be enhanced to discover fields
+                        "minzoom": zoom_range[0],
+                        "maxzoom": zoom_range[1],
+                    }
+                    for layer_name in discovered_layers
+                ]
+
             # Set PMTiles metadata
             builder.set_metadata(
                 PMTilesMetadata(
@@ -380,6 +393,7 @@ def _build_archive(
                     max_zoom=zoom_range[1],
                     tile_type=tile_type,
                     format=tile_format,
+                    vector_layers=vector_layers_metadata,
                 )
             )
             builder.build()

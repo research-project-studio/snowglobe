@@ -31,6 +31,7 @@ class PMTilesMetadata:
     max_zoom: int
     tile_type: str  # "vector" or "raster"
     format: str     # "pbf", "png", etc.
+    vector_layers: list[dict] | None = None  # TileJSON vector_layers spec
 
 
 class PMTilesBuilder:
@@ -110,6 +111,10 @@ class PMTilesBuilder:
                 "name": self.metadata.name,
                 "description": self.metadata.description,
             }
+
+            # Add vector_layers for MVT tiles (required by TileJSON spec)
+            if self.metadata.vector_layers is not None:
+                json_metadata["vector_layers"] = self.metadata.vector_layers
 
             writer.finalize(header, json_metadata)
 
