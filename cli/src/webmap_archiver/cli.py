@@ -1279,6 +1279,85 @@ def inspect(har_file: Path):
         console.print(f"  Center: ({bounds.center[0]:.4f}, {bounds.center[1]:.4f})")
 
 
+@main.command()
+@click.argument('bundle_file', type=click.Path(exists=True, path_type=Path))
+@click.option('-o', '--output', type=click.Path(path_type=Path), help='Output ZIP path')
+@click.option('-v', '--verbose', is_flag=True, help='Verbose output')
+def process(bundle_file: Path, output: Path | None, verbose: bool):
+    """Process a capture bundle into an archive.
+
+    This command processes capture bundles created by the browser extension
+    or other tools. The bundle should be a JSON file following the v1.0
+    capture bundle format.
+    """
+    from .api import create_archive_from_bundle, inspect_bundle
+
+    bundle_path = Path(bundle_file)
+
+    # Set defaults
+    if output is None:
+        output = bundle_path.with_suffix('.zip')
+
+    console.print(f"[bold]Processing capture bundle:[/] {bundle_path}")
+    console.print(f"[bold]Output:[/] {output}")
+    console.print()
+
+    # Load bundle
+    with console.status("Loading bundle..."):
+        with open(bundle_path) as f:
+            bundle = json.load(f)
+
+    # Inspect first
+    with console.status("Validating bundle..."):
+        inspection = inspect_bundle(bundle)
+
+    if not inspection.is_valid:
+        console.print("[red]✗ Bundle validation failed:[/]")
+        for error in inspection.errors:
+            console.print(f"  • {error}")
+        raise click.Abort()
+
+    console.print(f"[green]✓ Valid bundle:[/]")
+    console.print(f"  Version: {inspection.version}")
+    console.print(f"  URL: {inspection.url}")
+    console.print(f"  Tiles: {inspection.tile_count}")
+    console.print(f"  Sources: {', '.join(inspection.tile_sources)}")
+
+    if inspection.warnings:
+        console.print("[yellow]⚠ Warnings:[/]")
+        for warning in inspection.warnings:
+            console.print(f"  • {warning}")
+    console.print()
+
+    # Create archive
+    try:
+        result = create_archive_from_bundle(
+            bundle=bundle,
+            output_path=output,
+            verbose=verbose,
+        )
+
+        console.print("[green]✓ Archive created successfully![/]")
+        console.print(f"  Path: {result.output_path}")
+        console.print(f"  Size: {result.size:,} bytes ({result.size / (1024*1024):.1f} MB)")
+        console.print(f"  Tiles: {result.tile_count}")
+        console.print(f"  Sources: {len(result.tile_sources)}")
+
+        for source in result.tile_sources:
+            layers_str = f" ({len(source.discovered_layers)} layers)" if source.discovered_layers else ""
+            console.print(f"    • {source.name}: {source.tile_count} tiles{layers_str}")
+
+        console.print()
+        console.print("[dim]Open viewer.html in the archive to view the map[/]")
+
+    except Exception as e:
+        console.print(f"[red]✗ Error creating archive:[/] {e}")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
+        raise click.Abort()
+
+
 @main.command('capture-style-help')
 def capture_style_help():
     """Show instructions for capturing map style from browser DevTools."""

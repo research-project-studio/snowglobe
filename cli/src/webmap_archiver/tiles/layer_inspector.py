@@ -118,10 +118,10 @@ def _is_valid_layer_name(s: str) -> bool:
     return True
 
 
-def extract_layer_names_protobuf(tile_content: bytes) -> list[TileLayerInfo]:
+def extract_layer_names_protobuf(tile_content: bytes) -> list[str]:
     """
-    Extract layer information using proper protobuf parsing.
-    
+    Extract source-layer names from MVT protobuf content.
+
     MVT protobuf structure:
     message Tile {
         repeated Layer layers = 3;
@@ -131,41 +131,91 @@ def extract_layer_names_protobuf(tile_content: bytes) -> list[TileLayerInfo]:
         repeated Feature features = 2;
         ...
     }
+
+    Returns:
+        List of layer names found in the tile
     """
     content = decompress_tile(tile_content)
-    layers = []
-    
+    layer_names = []
+
     # Parse protobuf manually (simplified for MVT)
     pos = 0
     while pos < len(content):
         # Read field tag
         if pos >= len(content):
             break
-            
+
         tag_byte = content[pos]
         field_num = tag_byte >> 3
         wire_type = tag_byte & 0x07
         pos += 1
-        
+
         if field_num == 3 and wire_type == 2:  # Layer field (length-delimited)
             # Read length (varint)
             length, pos = _read_varint(content, pos)
             if length is None or pos + length > len(content):
                 break
-            
+
             # Parse layer submessage
             layer_data = content[pos:pos + length]
             layer_info = _parse_layer(layer_data)
             if layer_info and layer_info.name:
-                layers.append(layer_info)
-            
+                layer_names.append(layer_info.name)
+
             pos += length
         else:
             # Skip unknown field
             pos = _skip_field(content, pos, wire_type)
             if pos is None:
                 break
-    
+
+    return layer_names
+
+
+def extract_layer_info_protobuf(tile_content: bytes) -> list[TileLayerInfo]:
+    """
+    Extract detailed layer information using proper protobuf parsing.
+
+    This is the detailed version that returns TileLayerInfo objects.
+    Use extract_layer_names_protobuf() if you only need names.
+
+    Returns:
+        List of TileLayerInfo objects with names and metadata
+    """
+    content = decompress_tile(tile_content)
+    layers = []
+
+    # Parse protobuf manually (simplified for MVT)
+    pos = 0
+    while pos < len(content):
+        # Read field tag
+        if pos >= len(content):
+            break
+
+        tag_byte = content[pos]
+        field_num = tag_byte >> 3
+        wire_type = tag_byte & 0x07
+        pos += 1
+
+        if field_num == 3 and wire_type == 2:  # Layer field (length-delimited)
+            # Read length (varint)
+            length, pos = _read_varint(content, pos)
+            if length is None or pos + length > len(content):
+                break
+
+            # Parse layer submessage
+            layer_data = content[pos:pos + length]
+            layer_info = _parse_layer(layer_data)
+            if layer_info and layer_info.name:
+                layers.append(layer_info)
+
+            pos += length
+        else:
+            # Skip unknown field
+            pos = _skip_field(content, pos, wire_type)
+            if pos is None:
+                break
+
     return layers
 
 
@@ -242,22 +292,52 @@ def _parse_layer(layer_data: bytes) -> TileLayerInfo | None:
     return None
 
 
-def discover_layers_from_tiles(tiles: list[tuple[any, bytes]]) -> dict[str, TileLayerInfo]:
+def discover_layers_from_tiles(tiles: list[tuple]) -> list[str]:
     """
-    Discover all unique layers from a collection of tiles.
-    
+    Discover all unique source-layer names from a list of tiles.
+
+    Samples tiles across the set to find all layers.
+
     Args:
         tiles: List of (coord, content) tuples
-        
+
+    Returns:
+        List of unique layer names
+    """
+    all_layers = []
+
+    # Sample up to 10 tiles
+    sample_size = min(10, len(tiles))
+
+    for i in range(sample_size):
+        coord, content = tiles[i]
+        layers = extract_layer_names_protobuf(content)
+        for layer in layers:
+            if layer not in all_layers:
+                all_layers.append(layer)
+
+    return all_layers
+
+
+def discover_layer_info_from_tiles(tiles: list[tuple[any, bytes]]) -> dict[str, TileLayerInfo]:
+    """
+    Discover all unique layers from a collection of tiles with detailed info.
+
+    This is the detailed version that returns TileLayerInfo objects.
+    Use discover_layers_from_tiles() if you only need names.
+
+    Args:
+        tiles: List of (coord, content) tuples
+
     Returns:
         Dict mapping layer name to TileLayerInfo with aggregated info
     """
     all_layers: dict[str, TileLayerInfo] = {}
-    
+
     # Sample tiles to find layers (don't need to parse all)
     # Different zoom levels might have different layers
     sample_size = min(10, len(tiles))
-    
+
     # Get tiles from different zoom levels if possible
     by_zoom: dict[int, list] = {}
     for coord, content in tiles:
@@ -265,19 +345,19 @@ def discover_layers_from_tiles(tiles: list[tuple[any, bytes]]) -> dict[str, Tile
         if z not in by_zoom:
             by_zoom[z] = []
         by_zoom[z].append(content)
-    
+
     # Sample from each zoom level
     sampled = []
     for z in sorted(by_zoom.keys()):
         sampled.extend(by_zoom[z][:3])  # Up to 3 tiles per zoom
         if len(sampled) >= sample_size:
             break
-    
+
     # Extract layers from sampled tiles
     for content in sampled:
         try:
             # Try protobuf parser first (more accurate)
-            layer_infos = extract_layer_names_protobuf(content)
+            layer_infos = extract_layer_info_protobuf(content)
             for info in layer_infos:
                 if info.name not in all_layers:
                     all_layers[info.name] = info
@@ -290,38 +370,21 @@ def discover_layers_from_tiles(tiles: list[tuple[any, bytes]]) -> dict[str, Tile
             for name in names:
                 if name not in all_layers:
                     all_layers[name] = TileLayerInfo(name=name)
-    
+
     return all_layers
 
 
-def get_primary_layer_name(tiles: list[tuple[any, bytes]]) -> str | None:
+def get_primary_layer_name(tiles: list[tuple]) -> str | None:
     """
-    Get the most likely primary/main layer name from tiles.
-    
-    For data overlays, there's often just one layer.
-    For basemaps, we return the first one found.
-    
+    Get the most common layer name from tiles.
+
+    Useful when you need a single source-layer to target.
+
     Args:
         tiles: List of (coord, content) tuples
-        
+
     Returns:
         Primary layer name, or None if no layers found
     """
     layers = discover_layers_from_tiles(tiles)
-    
-    if not layers:
-        return None
-    
-    # If only one layer, that's our answer
-    if len(layers) == 1:
-        return list(layers.keys())[0]
-    
-    # For multiple layers, prefer ones with more features
-    # or ones with more descriptive names
-    sorted_layers = sorted(
-        layers.items(),
-        key=lambda x: (x[1].feature_count, len(x[0])),
-        reverse=True
-    )
-    
-    return sorted_layers[0][0]
+    return layers[0] if layers else None
