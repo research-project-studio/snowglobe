@@ -75,7 +75,13 @@ def fastapi_app():
         CaptureValidationError,
         __version__,
     )
-    from webmap_archiver.capture.style_extractor import extract_style_from_url
+
+    # Import style extractor - will be None if pyppeteer not available
+    try:
+        from webmap_archiver.capture.style_extractor import extract_style_from_url
+    except ImportError as e:
+        print(f"WARNING: Style extractor not available: {e}")
+        extract_style_from_url = None
 
     web_app = FastAPI(
         title="WebMap Archiver API",
@@ -108,6 +114,12 @@ def fastapi_app():
 
         Returns the style JSON for use with /process endpoint.
         """
+        if extract_style_from_url is None:
+            raise HTTPException(
+                status_code=501,
+                detail="Style extraction not available. Pyppeteer not installed."
+            )
+
         try:
             print(f"[API] Fetching style from {request.url}", flush=True)
 
@@ -185,7 +197,7 @@ def fastapi_app():
 
             style_source = 'bundle'
 
-            if not has_style and url:
+            if not has_style and url and extract_style_from_url is not None:
                 print(f"[API] No style in bundle, fetching from {url}", flush=True)
 
                 style_result = await extract_style_from_url(
