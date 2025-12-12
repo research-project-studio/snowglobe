@@ -38,15 +38,17 @@ image = (
         "libcairo2",
         "fonts-liberation",
     )
-    .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git#subdirectory=cli",
-        "pyppeteer>=1.0.0",
-        "fastapi>=0.109.0",
-    )
+    # Install pyppeteer first, separately, before the package
+    .pip_install("pyppeteer>=1.0.0")
     .env({
         "PYPPETEER_CHROMIUM_EXECUTABLE": "/usr/bin/chromium",
         "PYPPETEER_HOME": "/tmp/pyppeteer",
     })
+    # Then install the package
+    .pip_install(
+        "git+https://github.com/research-project-studio/snowglobe.git#subdirectory=cli",
+        "fastapi>=0.109.0",
+    )
 )
 
 volume = modal.Volume.from_name("webmap-archiver-outputs", create_if_missing=True)
