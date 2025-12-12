@@ -187,6 +187,34 @@ MAP_INTERCEPTOR_SCRIPT = """
     watchForLibrary('maplibregl', 'maplibre');
     watchForLibrary('mapboxgl', 'mapbox');
 
+    // Polling fallback - check periodically for libraries that might have been loaded
+    let pollAttempts = 0;
+    const maxPollAttempts = 50;  // 5 seconds total
+
+    function pollForLibraries() {
+        pollAttempts++;
+
+        // Check if maplibregl exists and hasn't been patched
+        if (window.maplibregl && window.maplibregl.Map && !window.maplibregl.Map.__webmap_patched__) {
+            console.log('[WebMap Archiver] Polling found maplibregl - patching now');
+            patchMapLibrary(window.maplibregl, 'maplibre');
+        }
+
+        // Check if mapboxgl exists and hasn't been patched
+        if (window.mapboxgl && window.mapboxgl.Map && !window.mapboxgl.Map.__webmap_patched__) {
+            console.log('[WebMap Archiver] Polling found mapboxgl - patching now');
+            patchMapLibrary(window.mapboxgl, 'mapbox');
+        }
+
+        // Continue polling if we haven't found anything yet and haven't exceeded max attempts
+        if (window.__WEBMAP_CAPTURE__.maps.length === 0 && pollAttempts < maxPollAttempts) {
+            setTimeout(pollForLibraries, 100);
+        }
+    }
+
+    // Start polling
+    setTimeout(pollForLibraries, 100);
+
     window.__WEBMAP_CAPTURE__.ready = true;
     console.log('[WebMap Archiver] Interceptor ready');
 })();
@@ -414,6 +442,9 @@ async def capture_map_from_url(
 
         page: Page = await browser.newPage()
 
+        # Log console messages for debugging
+        page.on('console', lambda msg: print(f"[Browser Console] {msg.text}"))
+
         await page.setViewport({
             'width': viewport_width,
             'height': viewport_height,
@@ -523,6 +554,8 @@ async def capture_map_from_url(
 
         result.debug['interceptorReady'] = extract_result.get('interceptorReady')
         result.debug['mapCount'] = extract_result.get('mapCount')
+
+        print(f"[Capture] Debug: interceptorReady={result.debug['interceptorReady']}, mapCount={result.debug['mapCount']}")
 
         if extract_result.get('style'):
             result.style = extract_result['style']
