@@ -470,13 +470,17 @@ async def capture_map_from_url(
             # Track relevant requests
             if is_tile_request(req_url):
                 pending_responses[req_url] = {'type': 'tile', 'url': req_url}
+                print(f"[Capture] Tracking tile: {req_url}")
             elif is_style_request(req_url):
                 pending_responses[req_url] = {'type': 'style', 'url': req_url}
+                print(f"[Capture] Tracking style: {req_url}")
             elif is_sprite_request(req_url):
                 rtype = 'sprite_png' if req_url.endswith('.png') else 'sprite_json'
                 pending_responses[req_url] = {'type': rtype, 'url': req_url}
+                print(f"[Capture] Tracking sprite: {req_url}")
             elif is_glyph_request(req_url):
                 pending_responses[req_url] = {'type': 'glyph', 'url': req_url}
+                print(f"[Capture] Tracking glyph: {req_url}")
 
             await request.continue_()
 
@@ -507,6 +511,20 @@ async def capture_map_from_url(
 
         result.title = await page.title()
         print(f"[Capture] Page loaded: {result.title}")
+
+        # Verify interceptor is present
+        interceptor_check = await page.evaluate("""
+            () => {
+                return {
+                    present: typeof window.__WEBMAP_CAPTURE__ !== 'undefined',
+                    ready: window.__WEBMAP_CAPTURE__?.ready || false,
+                    version: window.__WEBMAP_CAPTURE__?.interceptorVersion || null,
+                    maplibreglExists: typeof window.maplibregl !== 'undefined',
+                    mapboxglExists: typeof window.mapboxgl !== 'undefined',
+                };
+            }
+        """)
+        print(f"[Capture] Interceptor check: {interceptor_check}")
 
         # Wait for map to initialize
         print(f"[Capture] Waiting {wait_for_idle}s for map initialization...")
