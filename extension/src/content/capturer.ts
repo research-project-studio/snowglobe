@@ -182,6 +182,43 @@ export function captureStyleViaInjection(): Promise<MapLibreStyle | null> {
           for (const prop of ['_map', '__map', 'map']) {
             if (captureFromInstance(container[prop])) return;
           }
+
+          // Try React fiber internals (for React apps)
+          try {
+            const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
+            if (fiberKey) {
+              const fiber = container[fiberKey];
+              // Walk up the fiber tree looking for map instance
+              let current = fiber;
+              let depth = 0;
+              while (current && depth < 20) {
+                // Check memoizedState (hooks)
+                if (current.memoizedState) {
+                  let state = current.memoizedState;
+                  while (state) {
+                    if (captureFromInstance(state.memoizedState)) return;
+                    state = state.next;
+                  }
+                }
+                // Check memoizedProps
+                if (current.memoizedProps) {
+                  for (const key in current.memoizedProps) {
+                    if (captureFromInstance(current.memoizedProps[key])) return;
+                  }
+                }
+                // Check stateNode (class component instance)
+                if (current.stateNode && typeof current.stateNode === 'object') {
+                  for (const key in current.stateNode) {
+                    if (captureFromInstance(current.stateNode[key])) return;
+                  }
+                }
+                current = current.return;
+                depth++;
+              }
+            }
+          } catch (e) {
+            console.error('React fiber traversal error:', e);
+          }
         }
 
         // Strategy 3: Fallback - scan all window properties

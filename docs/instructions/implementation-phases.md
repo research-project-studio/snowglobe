@@ -35,7 +35,7 @@ This document tracks progress for the critical issues identified in `address-cri
 ---
 
 ## Phase 2: Capture Runtime Style (Extension)
-**Status**: ✅ COMPLETED
+**Status**: ✅ COMPLETED (with React support added 2025-12-12)
 **Scope**: Browser extension changes only
 **Dependencies**: Phase 1 (recommended, not required)
 
@@ -45,21 +45,27 @@ This document tracks progress for the critical issues identified in `address-cri
 - [x] Check `window.map`, `window.maplibreMap`, `window.mapboxMap`
 - [x] Check `.__maplibregl_map` and `.__mapboxgl_map` on containers
 - [x] Fallback to scanning all window properties
+- [x] Add React fiber tree traversal for React apps (NEW 2025-12-12)
 - [x] Call `map.getStyle()` when stopping recording (already implemented)
 - [x] Include captured style in bundle JSON (already implemented)
 - [x] Handle cases where style capture fails gracefully (already implemented)
 
 **Files Modified**:
-- `extension/src/content/capturer.ts` (enhanced detection patterns)
+- `extension/src/content/capturer.ts` (enhanced detection patterns + React fiber support)
 
 **Success Criteria**: ✅ ALL MET
 - Bundle includes `style` field with full runtime style JSON ✅
 - Works with MapLibre and Mapbox maps ✅
 - Three-tier detection strategy for maximum compatibility ✅
+- Works with React apps where map is in component state ✅ (NEW)
 - Falls back gracefully if map instance not found ✅
 - 5-second timeout prevents hanging ✅
 
-**Notes**: This phase was mostly already implemented. The enhancement added comprehensive detection patterns matching the spec, including window property scanning and special container properties.
+**Notes**:
+- Initial implementation was mostly already present
+- First enhancement added comprehensive detection patterns matching the spec, including window property scanning and special container properties
+- Second enhancement (2025-12-12) added React fiber tree traversal to handle React apps where map instance is stored in component state (`memoizedState`, `memoizedProps`, or `stateNode`) rather than on DOM or window
+- React traversal walks up the fiber tree with depth limit of 20 to prevent infinite loops
 
 ---
 
