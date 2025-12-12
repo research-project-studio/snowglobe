@@ -463,24 +463,32 @@ async def capture_map_from_url(
         # Enable request interception
         await page.setRequestInterception(True)
 
+        # Track request statistics
+        request_stats = {'total': 0, 'tiles': 0, 'styles': 0, 'sprites': 0, 'glyphs': 0}
+
         async def on_request(request):
             """Track and continue requests."""
             req_url = request.url
+            request_stats['total'] += 1
 
             # Track relevant requests
             if is_tile_request(req_url):
+                request_stats['tiles'] += 1
                 pending_responses[req_url] = {'type': 'tile', 'url': req_url}
-                print(f"[Capture] Tracking tile: {req_url}")
+                print(f"[Capture] Tile: {req_url}", flush=True)
             elif is_style_request(req_url):
+                request_stats['styles'] += 1
                 pending_responses[req_url] = {'type': 'style', 'url': req_url}
-                print(f"[Capture] Tracking style: {req_url}")
+                print(f"[Capture] Style: {req_url}", flush=True)
             elif is_sprite_request(req_url):
+                request_stats['sprites'] += 1
                 rtype = 'sprite_png' if req_url.endswith('.png') else 'sprite_json'
                 pending_responses[req_url] = {'type': rtype, 'url': req_url}
-                print(f"[Capture] Tracking sprite: {req_url}")
+                print(f"[Capture] Sprite: {req_url}", flush=True)
             elif is_glyph_request(req_url):
+                request_stats['glyphs'] += 1
                 pending_responses[req_url] = {'type': 'glyph', 'url': req_url}
-                print(f"[Capture] Tracking glyph: {req_url}")
+                print(f"[Capture] Glyph: {req_url}", flush=True)
 
             await request.continue_()
 
@@ -511,20 +519,25 @@ async def capture_map_from_url(
 
         result.title = await page.title()
         print(f"[Capture] Page loaded: {result.title}")
+        print(f"[Capture] Requests during load: {request_stats}")
 
         # Verify interceptor is present
-        interceptor_check = await page.evaluate("""
-            () => {
-                return {
-                    present: typeof window.__WEBMAP_CAPTURE__ !== 'undefined',
-                    ready: window.__WEBMAP_CAPTURE__?.ready || false,
-                    version: window.__WEBMAP_CAPTURE__?.interceptorVersion || null,
-                    maplibreglExists: typeof window.maplibregl !== 'undefined',
-                    mapboxglExists: typeof window.mapboxgl !== 'undefined',
-                };
-            }
-        """)
-        print(f"[Capture] Interceptor check: {interceptor_check}")
+        try:
+            interceptor_check = await page.evaluate("""
+                () => {
+                    return {
+                        present: typeof window.__WEBMAP_CAPTURE__ !== 'undefined',
+                        ready: window.__WEBMAP_CAPTURE__?.ready || false,
+                        version: window.__WEBMAP_CAPTURE__?.interceptorVersion || null,
+                        maplibreglExists: typeof window.maplibregl !== 'undefined',
+                        mapboxglExists: typeof window.mapboxgl !== 'undefined',
+                    };
+                }
+            """)
+            print(f"[Capture] Interceptor check: {interceptor_check}")
+        except Exception as e:
+            print(f"[Capture] ERROR checking interceptor: {e}")
+            result.errors.append(f"Interceptor check failed: {e}")
 
         # Wait for map to initialize
         print(f"[Capture] Waiting {wait_for_idle}s for map initialization...")
@@ -614,6 +627,12 @@ async def capture_map_from_url(
                 ))
 
         print(f"[Capture] Captured {len(result.tiles)} tiles, {len(result.resources)} resources")
+
+        # Log what resources we captured
+        if result.resources:
+            print(f"[Capture] Resources captured:")
+            for res in result.resources:
+                print(f"  - {res.type}: {res.url}")
 
         # Group tiles by source for logging
         tiles_by_source: dict[str, int] = {}
