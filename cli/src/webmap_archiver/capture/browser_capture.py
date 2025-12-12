@@ -511,15 +511,15 @@ async def capture_map_from_url(
         page.on('response', lambda resp: asyncio.ensure_future(on_response(resp)))
 
         # Navigate to URL
-        print(f"[Capture] Navigating to {url}...")
+        print(f"[Capture] Navigating to {url}...", flush=True)
         await page.goto(url, {
             'waitUntil': 'networkidle2',
             'timeout': int(timeout * 1000),
         })
 
         result.title = await page.title()
-        print(f"[Capture] Page loaded: {result.title}")
-        print(f"[Capture] Requests during load: {request_stats}")
+        print(f"[Capture] Page loaded: {result.title}", flush=True)
+        print(f"[Capture] Requests during load: {request_stats}", flush=True)
 
         # Verify interceptor is present
         try:
@@ -534,53 +534,63 @@ async def capture_map_from_url(
                     };
                 }
             """)
-            print(f"[Capture] Interceptor check: {interceptor_check}")
+            print(f"[Capture] Interceptor check: {interceptor_check}", flush=True)
         except Exception as e:
-            print(f"[Capture] ERROR checking interceptor: {e}")
+            print(f"[Capture] ERROR checking interceptor: {e}", flush=True)
             result.errors.append(f"Interceptor check failed: {e}")
 
         # Wait for map to initialize
-        print(f"[Capture] Waiting {wait_for_idle}s for map initialization...")
+        print(f"[Capture] Waiting {wait_for_idle}s for map initialization...", flush=True)
         await asyncio.sleep(wait_for_idle)
 
         # Poll for style to be ready
-        print("[Capture] Waiting for map style to load...")
+        print("[Capture] Waiting for map style to load...", flush=True)
         style_ready = False
         start_time = asyncio.get_event_loop().time()
+        poll_count = 0
 
         while asyncio.get_event_loop().time() - start_time < wait_for_style:
-            check_result = await page.evaluate("""
-                () => {
-                    const capture = window.__WEBMAP_CAPTURE__;
-                    if (!capture || !capture.maps || capture.maps.length === 0) {
-                        return { ready: false, reason: 'no_maps' };
-                    }
-
-                    for (const entry of capture.maps) {
-                        if (entry.instance &&
-                            typeof entry.instance.isStyleLoaded === 'function' &&
-                            entry.instance.isStyleLoaded()) {
-                            return { ready: true };
+            poll_count += 1
+            try:
+                check_result = await page.evaluate("""
+                    () => {
+                        const capture = window.__WEBMAP_CAPTURE__;
+                        if (!capture || !capture.maps || capture.maps.length === 0) {
+                            return { ready: false, reason: 'no_maps' };
                         }
+
+                        for (const entry of capture.maps) {
+                            if (entry.instance &&
+                                typeof entry.instance.isStyleLoaded === 'function' &&
+                                entry.instance.isStyleLoaded()) {
+                                return { ready: true };
+                            }
+                        }
+
+                        return { ready: false, reason: 'style_not_loaded' };
                     }
+                """)
 
-                    return { ready: false, reason: 'style_not_loaded' };
-                }
-            """)
+                if poll_count % 10 == 0:  # Log every 5 seconds
+                    print(f"[Capture] Style poll #{poll_count}: {check_result}", flush=True)
 
-            if check_result.get('ready'):
-                style_ready = True
-                print("[Capture] Style is ready!")
+                if check_result.get('ready'):
+                    style_ready = True
+                    print("[Capture] Style is ready!", flush=True)
+                    break
+
+            except Exception as e:
+                print(f"[Capture] Error during style poll: {e}", flush=True)
                 break
 
             await asyncio.sleep(0.5)
 
         if not style_ready:
-            print("[Capture] Warning: Style may not be fully loaded")
+            print("[Capture] Warning: Style may not be fully loaded", flush=True)
             result.errors.append("Style load timeout - capture may be incomplete")
 
         # Extract captured data
-        print("[Capture] Extracting map data...")
+        print("[Capture] Extracting map data...", flush=True)
         extract_result = await page.evaluate(EXTRACT_DATA_SCRIPT)
 
         result.debug['interceptorReady'] = extract_result.get('interceptorReady')
