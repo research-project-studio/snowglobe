@@ -1,5 +1,10 @@
-"""Capture bundle parsing, validation, and browser-based capture."""
+"""
+Capture module for WebMap Archiver.
 
+Provides browser-based capture capabilities using Pyppeteer.
+"""
+
+# Bundle parsing (always available)
 from .parser import (
     CaptureParser,
     CaptureBundle,
@@ -11,18 +16,16 @@ from .parser import (
     validate_capture_bundle,
 )
 
-# Browser capture is optional - only available if pyppeteer is installed
+# Style extractor (requires pyppeteer, gracefully degrades)
 try:
-    from .browser_capture import (
-        capture_map_from_url,
-        capture_result_to_bundle,
-        CaptureResult,
-        TileCapture,
-        ResourceCapture,
+    from .style_extractor import (
+        extract_style_from_url,
+        extract_style_with_retry,
+        ExtractedStyle,
     )
-    _browser_capture_available = True
+    _style_extractor_available = True
 except ImportError:
-    _browser_capture_available = False
+    _style_extractor_available = False
 
 __all__ = [
     'CaptureParser',
@@ -35,11 +38,9 @@ __all__ = [
     'validate_capture_bundle',
 ]
 
-if _browser_capture_available:
+if _style_extractor_available:
     __all__.extend([
-        'capture_map_from_url',
-        'capture_result_to_bundle',
-        'CaptureResult',
-        'TileCapture',
-        'ResourceCapture',
+        'extract_style_from_url',
+        'extract_style_with_retry',
+        'ExtractedStyle',
     ])
