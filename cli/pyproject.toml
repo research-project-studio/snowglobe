@@ -44,6 +44,9 @@ server = [
     "fastapi>=0.109.0",
     "uvicorn>=0.25.0",
 ]
+capture = [
+    "pyppeteer>=1.0.0",
+]
 
 [project.scripts]
 webmap-archive = "webmap_archiver.cli:main"
