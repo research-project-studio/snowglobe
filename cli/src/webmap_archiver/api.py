@@ -316,6 +316,10 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
     Takes a MapLibre/Mapbox style object and rewrites the 'url' field in each
     source to use the pmtiles:// protocol pointing to local files.
 
+    Uses URL pattern matching to connect style sources to PMTiles files.
+    This is more reliable than string partial matching since we track the
+    original tile URL patterns through the pipeline.
+
     Args:
         style: MapLibre style object from map.getStyle()
         tile_source_infos: List of TileSourceInfo objects with PMTiles paths
@@ -331,47 +335,46 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
     if 'sources' not in rewritten_style:
         return rewritten_style
 
-    # Create mapping of source names from tile_source_infos
-    pmtiles_map = {info.name: info.path for info in tile_source_infos}
-
-    print(f"[StyleRewrite] Available PMTiles: {list(pmtiles_map.keys())}")
+    print(f"[StyleRewrite] Processing {len(rewritten_style['sources'])} sources")
 
     # Rewrite each source
     for source_name, source_def in rewritten_style['sources'].items():
         if source_def.get('type') not in ['vector', 'raster']:
             continue
 
-        # Try to match this style source to one of our PMTiles files
+        # Get tile URLs from style source
+        tile_urls = source_def.get('tiles', [])
+        if not tile_urls:
+            print(f"[StyleRewrite] Source '{source_name}' has no tile URLs, skipping")
+            continue
+
+        print(f"[StyleRewrite] Matching source '{source_name}'")
+        print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...")
+
+        # Try to match this style source to one of our PMTiles files by URL pattern
         matched_pmtiles = None
 
-        # Strategy 1: Direct name matching (e.g., "maptiler" in "maptiler_planet")
-        for pmtiles_name, pmtiles_path in pmtiles_map.items():
-            if pmtiles_name.lower() in source_name.lower() or source_name.lower() in pmtiles_name.lower():
-                matched_pmtiles = pmtiles_path
-                break
+        for tile_url in tile_urls:
+            # Normalize the style URL to a pattern (replace coords with placeholders)
+            style_pattern = _normalize_tile_url(tile_url)
+            print(f"[StyleRewrite]   Normalized pattern: {style_pattern}")
 
-        # Strategy 2: URL hostname matching (e.g., "wxy-labs" from tiles.wxy-labs.org)
-        if not matched_pmtiles:
-            tile_urls = source_def.get('tiles', [])
-            print(f"[StyleRewrite] Checking source '{source_name}' with {len(tile_urls)} tile URLs")
-            for url in tile_urls:
-                try:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(url)
-                    # Extract hostname parts (e.g., tiles.wxy-labs.org -> wxy-labs)
-                    hostname = parsed.netloc
-                    print(f"[StyleRewrite]   URL hostname: {hostname}")
-                    for pmtiles_name, pmtiles_path in pmtiles_map.items():
-                        # Check if PMTiles name appears in hostname
-                        if pmtiles_name.lower() in hostname.lower() or hostname.replace('.', '-').lower().find(pmtiles_name.lower()) != -1:
-                            print(f"[StyleRewrite]   MATCH: '{pmtiles_name}' matches hostname '{hostname}'")
-                            matched_pmtiles = pmtiles_path
-                            break
-                    if matched_pmtiles:
-                        break
-                except Exception as e:
-                    print(f"[StyleRewrite]   Error parsing URL: {e}")
-                    pass
+            # Check against each PMTiles' URL pattern
+            for info in tile_source_infos:
+                if not info.url_pattern:
+                    continue
+
+                # Normalize the PMTiles URL pattern for comparison
+                pmtiles_pattern = _normalize_tile_url(info.url_pattern)
+
+                # Compare normalized patterns
+                if _patterns_match(style_pattern, pmtiles_pattern):
+                    print(f"[StyleRewrite]   MATCH: '{info.name}' (pattern: {pmtiles_pattern})")
+                    matched_pmtiles = info.path
+                    break
+
+            if matched_pmtiles:
+                break
 
         if matched_pmtiles:
             # Rewrite to use local PMTiles
@@ -380,9 +383,56 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
             # Remove tiles array if present (not needed for pmtiles:// protocol)
             source_def.pop('tiles', None)
         else:
-            print(f"[StyleRewrite] No match found for '{source_name}'")
+            print(f"[StyleRewrite] WARNING: No match found for '{source_name}'")
 
     return rewritten_style
+
+
+def _normalize_tile_url(url: str) -> str:
+    """
+    Normalize a tile URL to a pattern for comparison.
+
+    Converts concrete tile URLs like:
+      https://tiles.wxy-labs.org/parking_regs_v2/12/1205/1539.mvt
+    to normalized patterns like:
+      https://tiles.wxy-labs.org/parking_regs_v2/{z}/{x}/{y}.mvt
+
+    This handles various formats including with/without file extensions.
+    """
+    import re
+
+    # If already a template, normalize the placeholders
+    if '{z}' in url or '{x}' in url or '{y}' in url:
+        return url.replace('{z}', '{z}').replace('{x}', '{x}').replace('{y}', '{y}')
+
+    # Replace coordinate patterns with placeholders
+    # Match patterns like /12/1205/1539 or /12/1205/1539.pbf
+    pattern = r'/(\d+)/(\d+)/(\d+)'
+    match = re.search(pattern, url)
+    if match:
+        return url[:match.start()] + '/{z}/{x}/{y}' + url[match.end():]
+
+    return url
+
+
+def _patterns_match(pattern1: str, pattern2: str) -> bool:
+    """
+    Check if two URL patterns match, accounting for placeholder variations.
+
+    Handles cases where one uses {z}/{x}/{y} and another uses {z}/{x}/{y}.
+    Also strips query parameters and anchors for comparison.
+    """
+    from urllib.parse import urlparse
+
+    # Parse and compare just the path and netloc, ignoring query params
+    parsed1 = urlparse(pattern1)
+    parsed2 = urlparse(pattern2)
+
+    # Compare scheme + netloc + path (ignore query/fragment)
+    base1 = f"{parsed1.scheme}://{parsed1.netloc}{parsed1.path}"
+    base2 = f"{parsed2.scheme}://{parsed2.netloc}{parsed2.path}"
+
+    return base1 == base2
 
 
 def _build_archive(
@@ -475,6 +525,7 @@ def _build_archive(
             builder.build()
             
             # Track for packager
+            url_pattern = processed.url_patterns.get(source_name) if processed.url_patterns else None
             tile_source_infos.append(TileSourceInfo(
                 name=safe_name,
                 path=f"tiles/{safe_name}.pmtiles",
@@ -482,6 +533,7 @@ def _build_archive(
                 format=tile_format,
                 tile_count=len(tiles),
                 zoom_range=zoom_range,
+                url_pattern=url_pattern,
             ))
             
             # Track for result

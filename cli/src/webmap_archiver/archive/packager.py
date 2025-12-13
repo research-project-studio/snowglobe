@@ -25,6 +25,7 @@ class TileSourceInfo:
     format: str
     tile_count: int
     zoom_range: tuple[int, int]
+    url_pattern: str | None = None  # Original tile URL pattern for source matching
 
 
 @dataclass

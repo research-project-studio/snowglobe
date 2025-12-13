@@ -37,6 +37,9 @@ class ProcessedCapture:
     title: str
     captured_at: str
 
+    # URL patterns for source matching (maps source_id to original URL pattern)
+    url_patterns: dict[str, str] = None
+
 
 def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
     """
@@ -46,6 +49,7 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
     """
     tiles_by_source: dict[str, list[tuple[TileCoord, bytes]]] = {}
     tile_sources: dict[str, TileSource] = {}
+    url_patterns: dict[str, str] = {}
 
     # Process pre-extracted tiles
     if bundle.tiles:
@@ -55,12 +59,15 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
             if source_id not in tiles_by_source:
                 tiles_by_source[source_id] = []
                 # Create TileSource from first tile
+                url_template = _infer_url_template(tile.url)
                 tile_sources[source_id] = TileSource(
                     name=source_id,
-                    url_template=_infer_url_template(tile.url),
+                    url_template=url_template,
                     tile_type=_infer_tile_type(tile.url, tile.data),
                     format=_infer_format(tile.url)
                 )
+                # Store URL pattern for source matching
+                url_patterns[source_id] = url_template
 
             tiles_by_source[source_id].append((tile.coord, tile.data))
 
@@ -90,6 +97,8 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
         for template, (source, tiles) in sources.items():
             tile_sources[source.name] = source
             tiles_by_source[source.name] = tiles
+            # Store URL pattern for source matching
+            url_patterns[source.name] = source.url_template
 
     elif bundle.har:
         # HAR is present but we have tiles - still parse for metadata
@@ -139,7 +148,8 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
         har_entries=har_entries,
         source_url=bundle.metadata.url,
         title=bundle.metadata.title or _title_from_url(bundle.metadata.url),
-        captured_at=bundle.metadata.captured_at
+        captured_at=bundle.metadata.captured_at,
+        url_patterns=url_patterns
     )
 
 
