@@ -340,22 +340,38 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
             continue
 
         # Try to match this style source to one of our PMTiles files
-        # Strategy: Look for partial name matches
         matched_pmtiles = None
+
+        # Strategy 1: Direct name matching (e.g., "maptiler" in "maptiler_planet")
         for pmtiles_name, pmtiles_path in pmtiles_map.items():
-            # Check if the PMTiles name appears in the source name or vice versa
             if pmtiles_name.lower() in source_name.lower() or source_name.lower() in pmtiles_name.lower():
                 matched_pmtiles = pmtiles_path
                 break
+
+        # Strategy 2: URL hostname matching (e.g., "wxy-labs" from tiles.wxy-labs.org)
+        if not matched_pmtiles:
+            tile_urls = source_def.get('tiles', [])
+            for url in tile_urls:
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    # Extract hostname parts (e.g., tiles.wxy-labs.org -> wxy-labs)
+                    hostname = parsed.netloc
+                    for pmtiles_name, pmtiles_path in pmtiles_map.items():
+                        # Check if PMTiles name appears in hostname
+                        if pmtiles_name.lower() in hostname.lower() or hostname.replace('.', '-').lower().find(pmtiles_name.lower()) != -1:
+                            matched_pmtiles = pmtiles_path
+                            break
+                    if matched_pmtiles:
+                        break
+                except:
+                    pass
 
         if matched_pmtiles:
             # Rewrite to use local PMTiles
             source_def['url'] = f"pmtiles://{matched_pmtiles}"
             # Remove tiles array if present (not needed for pmtiles:// protocol)
             source_def.pop('tiles', None)
-        else:
-            # No match found - keep original but note this in console
-            pass
 
     return rewritten_style
 
