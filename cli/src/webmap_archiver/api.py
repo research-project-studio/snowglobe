@@ -334,6 +334,8 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
     # Create mapping of source names from tile_source_infos
     pmtiles_map = {info.name: info.path for info in tile_source_infos}
 
+    print(f"[StyleRewrite] Available PMTiles: {list(pmtiles_map.keys())}")
+
     # Rewrite each source
     for source_name, source_def in rewritten_style['sources'].items():
         if source_def.get('type') not in ['vector', 'raster']:
@@ -351,27 +353,34 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
         # Strategy 2: URL hostname matching (e.g., "wxy-labs" from tiles.wxy-labs.org)
         if not matched_pmtiles:
             tile_urls = source_def.get('tiles', [])
+            print(f"[StyleRewrite] Checking source '{source_name}' with {len(tile_urls)} tile URLs")
             for url in tile_urls:
                 try:
                     from urllib.parse import urlparse
                     parsed = urlparse(url)
                     # Extract hostname parts (e.g., tiles.wxy-labs.org -> wxy-labs)
                     hostname = parsed.netloc
+                    print(f"[StyleRewrite]   URL hostname: {hostname}")
                     for pmtiles_name, pmtiles_path in pmtiles_map.items():
                         # Check if PMTiles name appears in hostname
                         if pmtiles_name.lower() in hostname.lower() or hostname.replace('.', '-').lower().find(pmtiles_name.lower()) != -1:
+                            print(f"[StyleRewrite]   MATCH: '{pmtiles_name}' matches hostname '{hostname}'")
                             matched_pmtiles = pmtiles_path
                             break
                     if matched_pmtiles:
                         break
-                except:
+                except Exception as e:
+                    print(f"[StyleRewrite]   Error parsing URL: {e}")
                     pass
 
         if matched_pmtiles:
             # Rewrite to use local PMTiles
+            print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}")
             source_def['url'] = f"pmtiles://{matched_pmtiles}"
             # Remove tiles array if present (not needed for pmtiles:// protocol)
             source_def.pop('tiles', None)
+        else:
+            print(f"[StyleRewrite] No match found for '{source_name}'")
 
     return rewritten_style
 
