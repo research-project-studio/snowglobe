@@ -40,10 +40,12 @@ image = (
     )
     # Install pyppeteer first, separately, before the package
     .pip_install("pyppeteer>=1.0.0")
-    .env({
-        "PYPPETEER_CHROMIUM_EXECUTABLE": "/usr/bin/chromium",
-        "PYPPETEER_HOME": "/tmp/pyppeteer",
-    })
+    .env(
+        {
+            "PYPPETEER_CHROMIUM_EXECUTABLE": "/usr/bin/chromium",
+            "PYPPETEER_HOME": "/tmp/pyppeteer",
+        }
+    )
     # Then install the package
     .pip_install(
         "git+https://github.com/research-project-studio/snowglobe.git#subdirectory=cli",
@@ -93,6 +95,7 @@ def fastapi_app():
 
     class FetchStyleRequest(BaseModel):
         """Request to fetch style from URL."""
+
         url: str
         wait_for_load: Optional[float] = 3.0
         wait_for_style: Optional[float] = 10.0
@@ -118,8 +121,7 @@ def fastapi_app():
         """
         if extract_style_from_url is None:
             raise HTTPException(
-                status_code=501,
-                detail="Style extraction not available. Pyppeteer not installed."
+                status_code=501, detail="Style extraction not available. Pyppeteer not installed."
             )
 
         try:
@@ -149,6 +151,7 @@ def fastapi_app():
         except Exception as e:
             print(f"[API] fetch-style error: {e}", flush=True)
             import traceback
+
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -185,6 +188,14 @@ def fastapi_app():
                     If bundle.metadata.url exists and bundle.style is null,
                     style will be fetched from that URL.
         """
+        # TEMP DIAGNOSTIC - remove after debugging
+
+        print(f"[DIAG] Bundle keys: {bundle.keys()}", flush=True)
+        if "tiles" in bundle and bundle["tiles"]:
+            first_tile = bundle["tiles"][0]
+            print(f"[DIAG] First tile keys: {first_tile.keys()}", flush=True)
+            print(f"[DIAG] First tile URL: {first_tile.get('url', 'NO URL FIELD')}", flush=True)
+            # END DIAGNOSTIC
         try:
             archive_id = str(uuid.uuid4())[:8]
             output_path = Path(VOLUME_PATH) / f"{archive_id}.zip"
@@ -194,10 +205,10 @@ def fastapi_app():
             print(f"[API] Style in bundle: {bundle.get('style') is not None}", flush=True)
 
             # Check if we need to fetch style
-            url = bundle.get('metadata', {}).get('url')
-            has_style = bundle.get('style') is not None
+            url = bundle.get("metadata", {}).get("url")
+            has_style = bundle.get("style") is not None
 
-            style_source = 'bundle'
+            style_source = "bundle"
 
             if not has_style and url and extract_style_from_url is not None:
                 print(f"[API] No style in bundle, fetching from {url}", flush=True)
@@ -210,14 +221,17 @@ def fastapi_app():
                 )
 
                 if style_result.success:
-                    bundle['style'] = style_result.style
-                    style_source = 'extracted'
-                    print(f"[API] Style extracted: {len(style_result.style.get('layers', []))} layers", flush=True)
+                    bundle["style"] = style_result.style
+                    style_source = "extracted"
+                    print(
+                        f"[API] Style extracted: {len(style_result.style.get('layers', []))} layers",
+                        flush=True,
+                    )
 
                     # Also update viewport if we got better info
-                    if style_result.viewport and not bundle.get('viewport', {}).get('bounds'):
-                        bundle['viewport'] = {
-                            **bundle.get('viewport', {}),
+                    if style_result.viewport and not bundle.get("viewport", {}).get("bounds"):
+                        bundle["viewport"] = {
+                            **bundle.get("viewport", {}),
                             **style_result.viewport,
                         }
                 else:
@@ -238,6 +252,7 @@ def fastapi_app():
 
             # Generate filename
             from urllib.parse import urlparse
+
             if url:
                 host = urlparse(url).netloc.replace(".", "-").replace(":", "-")
             else:
@@ -263,9 +278,15 @@ def fastapi_app():
                 ],
                 "styleSource": style_source,
                 "styleInfo": {
-                    "present": bundle.get('style') is not None,
-                    "layerCount": len(bundle.get('style', {}).get('layers', [])) if bundle.get('style') else 0,
-                    "sources": list(bundle.get('style', {}).get('sources', {}).keys()) if bundle.get('style') else [],
+                    "present": bundle.get("style") is not None,
+                    "layerCount": (
+                        len(bundle.get("style", {}).get("layers", [])) if bundle.get("style") else 0
+                    ),
+                    "sources": (
+                        list(bundle.get("style", {}).get("sources", {}).keys())
+                        if bundle.get("style")
+                        else []
+                    ),
                 },
             }
 
@@ -275,6 +296,7 @@ def fastapi_app():
         except Exception as e:
             print(f"[API] Process error: {e}", flush=True)
             import traceback
+
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -301,6 +323,7 @@ def fastapi_app():
 # ============================================================================
 # Scheduled Cleanup
 # ============================================================================
+
 
 @app.function(
     image=image,
