@@ -48,7 +48,7 @@ image = (
     )
     # Then install the package
     .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git#subdirectory=cli",
+        "git+https://github.com/research-project-studio/snowglobe.git@da51176#subdirectory=cli",
         "fastapi>=0.109.0",
     )
 )

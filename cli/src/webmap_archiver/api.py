@@ -355,51 +355,80 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
         if source_def.get("type") not in ["vector", "raster"]:
             continue
 
-        # Get tile URLs from style source
+        # STRATEGY 1: Match by tiles array (direct tile URLs)
         tile_urls = source_def.get("tiles", [])
-        if not tile_urls:
-            print(f"[StyleRewrite] Source '{source_name}' has no tile URLs, skipping", flush=True)
+        if tile_urls:
+            print(f"[StyleRewrite] Matching source '{source_name}' (tiles array)", flush=True)
+            print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...", flush=True)
+
+            matched_pmtiles = None
+            for tile_url in tile_urls:
+                style_pattern = _normalize_tile_url(tile_url)
+                print(f"[StyleRewrite]   Normalized style pattern: {style_pattern}", flush=True)
+
+                for info in tile_source_infos:
+                    if not info.url_pattern:
+                        continue
+
+                    pmtiles_pattern = _normalize_tile_url(info.url_pattern)
+                    print(f"[StyleRewrite]   Comparing to '{info.name}': {pmtiles_pattern}", flush=True)
+
+                    if _patterns_match(style_pattern, pmtiles_pattern):
+                        print(f"[StyleRewrite]   MATCH FOUND!", flush=True)
+                        matched_pmtiles = info.path
+                        break
+
+                if matched_pmtiles:
+                    break
+
+            if matched_pmtiles:
+                print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
+                source_def["url"] = f"pmtiles://{matched_pmtiles}"
+                source_def.pop("tiles", None)
+                rewrite_count += 1
+            else:
+                print(f"[StyleRewrite] WARNING: No match found for '{source_name}'", flush=True)
             continue
 
-        print(f"[StyleRewrite] Matching source '{source_name}'", flush=True)
-        print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...", flush=True)
+        # STRATEGY 2: Match by TileJSON URL (domain-based matching)
+        tilejson_url = source_def.get("url")
+        if tilejson_url:
+            # Skip if already rewritten to pmtiles://
+            if tilejson_url.startswith("pmtiles://"):
+                continue
 
-        # Try to match this style source to one of our PMTiles files by URL pattern
-        matched_pmtiles = None
+            print(f"[StyleRewrite] Matching source '{source_name}' (TileJSON URL)", flush=True)
+            print(f"[StyleRewrite]   TileJSON URL: {tilejson_url}", flush=True)
 
-        for tile_url in tile_urls:
-            # Normalize the style URL to a pattern (replace coords with placeholders)
-            style_pattern = _normalize_tile_url(tile_url)
-            print(f"[StyleRewrite]   Normalized style pattern: {style_pattern}", flush=True)
+            from urllib.parse import urlparse
+            tilejson_parsed = urlparse(tilejson_url)
+            tilejson_domain = tilejson_parsed.netloc
 
-            # Check against each PMTiles' URL pattern
+            matched_pmtiles = None
             for info in tile_source_infos:
                 if not info.url_pattern:
-                    print(f"[StyleRewrite]   Skipping '{info.name}' - no URL pattern", flush=True)
                     continue
 
-                # Normalize the PMTiles URL pattern for comparison
-                pmtiles_pattern = _normalize_tile_url(info.url_pattern)
-                print(f"[StyleRewrite]   Comparing to '{info.name}': {pmtiles_pattern}", flush=True)
+                pmtiles_parsed = urlparse(info.url_pattern)
+                pmtiles_domain = pmtiles_parsed.netloc
 
-                # Compare normalized patterns
-                if _patterns_match(style_pattern, pmtiles_pattern):
-                    print(f"[StyleRewrite]   MATCH FOUND!", flush=True)
+                print(f"[StyleRewrite]   Comparing domain '{tilejson_domain}' to '{pmtiles_domain}' ({info.name})", flush=True)
+
+                if tilejson_domain == pmtiles_domain:
+                    print(f"[StyleRewrite]   DOMAIN MATCH FOUND!", flush=True)
                     matched_pmtiles = info.path
                     break
 
             if matched_pmtiles:
-                break
+                print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
+                source_def["url"] = f"pmtiles://{matched_pmtiles}"
+                rewrite_count += 1
+            else:
+                print(f"[StyleRewrite] WARNING: No domain match found for '{source_name}'", flush=True)
+            continue
 
-        if matched_pmtiles:
-            # Rewrite to use local PMTiles
-            print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
-            source_def["url"] = f"pmtiles://{matched_pmtiles}"
-            # Remove tiles array if present (not needed for pmtiles:// protocol)
-            source_def.pop("tiles", None)
-            rewrite_count += 1
-        else:
-            print(f"[StyleRewrite] WARNING: No match found for '{source_name}'", flush=True)
+        # No tiles array and no URL - nothing to match
+        print(f"[StyleRewrite] Source '{source_name}' has no tile URLs or TileJSON URL, skipping", flush=True)
 
     print(
         f"[StyleRewrite] Successfully rewrote {rewrite_count} of {len(rewritten_style['sources'])} sources",
