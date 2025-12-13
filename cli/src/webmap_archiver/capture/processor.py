@@ -58,16 +58,25 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
 
             if source_id not in tiles_by_source:
                 tiles_by_source[source_id] = []
-                # Create TileSource from first tile
-                url_template = _infer_url_template(tile.url)
+
+                # Get URL template from tile URL if available
+                url_template = None
+                if tile.url:
+                    url_template = _infer_url_template(tile.url)
+                    print(f"[Processor] Stored URL pattern for '{source_id}': {url_template}", flush=True)
+                else:
+                    print(f"[Processor] WARNING: No URL for source '{source_id}', pattern matching will fail", flush=True)
+
                 tile_sources[source_id] = TileSource(
                     name=source_id,
-                    url_template=url_template,
-                    tile_type=_infer_tile_type(tile.url, tile.data),
-                    format=_infer_format(tile.url)
+                    url_template=url_template or f"tiles/{source_id}",
+                    tile_type=_infer_tile_type(tile.url or "", tile.data),
+                    format=tile.format if hasattr(tile, 'format') and tile.format else _infer_format(tile.url or "")
                 )
+
                 # Store URL pattern for source matching
-                url_patterns[source_id] = url_template
+                if url_template:
+                    url_patterns[source_id] = url_template
 
             tiles_by_source[source_id].append((tile.coord, tile.data))
 

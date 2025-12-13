@@ -333,9 +333,17 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
     rewritten_style = copy.deepcopy(style)
 
     if 'sources' not in rewritten_style:
+        print("[StyleRewrite] No sources in style", flush=True)
         return rewritten_style
 
-    print(f"[StyleRewrite] Processing {len(rewritten_style['sources'])} sources")
+    print(f"[StyleRewrite] Processing {len(rewritten_style['sources'])} sources", flush=True)
+
+    # Debug: show what URL patterns we have
+    print(f"[StyleRewrite] Available PMTiles URL patterns:", flush=True)
+    for info in tile_source_infos:
+        print(f"[StyleRewrite]   {info.name}: {info.url_pattern}", flush=True)
+
+    rewrite_count = 0
 
     # Rewrite each source
     for source_name, source_def in rewritten_style['sources'].items():
@@ -345,11 +353,11 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
         # Get tile URLs from style source
         tile_urls = source_def.get('tiles', [])
         if not tile_urls:
-            print(f"[StyleRewrite] Source '{source_name}' has no tile URLs, skipping")
+            print(f"[StyleRewrite] Source '{source_name}' has no tile URLs, skipping", flush=True)
             continue
 
-        print(f"[StyleRewrite] Matching source '{source_name}'")
-        print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...")
+        print(f"[StyleRewrite] Matching source '{source_name}'", flush=True)
+        print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...", flush=True)
 
         # Try to match this style source to one of our PMTiles files by URL pattern
         matched_pmtiles = None
@@ -357,19 +365,21 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
         for tile_url in tile_urls:
             # Normalize the style URL to a pattern (replace coords with placeholders)
             style_pattern = _normalize_tile_url(tile_url)
-            print(f"[StyleRewrite]   Normalized pattern: {style_pattern}")
+            print(f"[StyleRewrite]   Normalized style pattern: {style_pattern}", flush=True)
 
             # Check against each PMTiles' URL pattern
             for info in tile_source_infos:
                 if not info.url_pattern:
+                    print(f"[StyleRewrite]   Skipping '{info.name}' - no URL pattern", flush=True)
                     continue
 
                 # Normalize the PMTiles URL pattern for comparison
                 pmtiles_pattern = _normalize_tile_url(info.url_pattern)
+                print(f"[StyleRewrite]   Comparing to '{info.name}': {pmtiles_pattern}", flush=True)
 
                 # Compare normalized patterns
                 if _patterns_match(style_pattern, pmtiles_pattern):
-                    print(f"[StyleRewrite]   MATCH: '{info.name}' (pattern: {pmtiles_pattern})")
+                    print(f"[StyleRewrite]   MATCH FOUND!", flush=True)
                     matched_pmtiles = info.path
                     break
 
@@ -378,12 +388,15 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
 
         if matched_pmtiles:
             # Rewrite to use local PMTiles
-            print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}")
+            print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
             source_def['url'] = f"pmtiles://{matched_pmtiles}"
             # Remove tiles array if present (not needed for pmtiles:// protocol)
             source_def.pop('tiles', None)
+            rewrite_count += 1
         else:
-            print(f"[StyleRewrite] WARNING: No match found for '{source_name}'")
+            print(f"[StyleRewrite] WARNING: No match found for '{source_name}'", flush=True)
+
+    print(f"[StyleRewrite] Successfully rewrote {rewrite_count} of {len(rewritten_style['sources'])} sources", flush=True)
 
     return rewritten_style
 
@@ -581,7 +594,7 @@ def _build_archive(
             # Rewrite style sources to point to local PMTiles
             captured_style = _rewrite_style_sources(capture.style, tile_source_infos)
             if verbose:
-                print(f"    Rewrote {len(captured_style.get('sources', {}))} source URLs to local PMTiles")
+                print("    Style source rewriting complete (see [StyleRewrite] logs for details)")
 
         # Generate viewer
         if verbose:

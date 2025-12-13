@@ -453,6 +453,7 @@
         x: r.tileCoords!.x,
         y: r.tileCoords!.y,
         sourceId: r.tileSource || "tiles",
+        url: r.url, // Include original URL for pattern matching
         data: r.body!, // base64-encoded
         format: r.mimeType.includes("png")
           ? "png"
