@@ -489,7 +489,8 @@ def _rewrite_sprite_url(style: dict) -> dict:
     """Rewrite sprite URL to point to local files."""
     if 'sprite' in style:
         # Local sprite path (without extension - MapLibre adds .png/.json)
-        style['sprite'] = './sprites/sprite'
+        # Use relative path without leading ./ as MapLibre's URL parser may not handle it
+        style['sprite'] = 'sprites/sprite'
         print(f"[StyleRewrite] Rewrote sprite URL to local path", flush=True)
     return style
 
@@ -498,7 +499,8 @@ def _rewrite_glyphs_url(style: dict) -> dict:
     """Rewrite glyphs URL to point to local files."""
     if 'glyphs' in style:
         # Local glyphs path template
-        style['glyphs'] = './glyphs/{fontstack}/{range}.pbf'
+        # Use relative path without leading ./ as MapLibre's URL parser may not handle it
+        style['glyphs'] = 'glyphs/{fontstack}/{range}.pbf'
         print(f"[StyleRewrite] Rewrote glyphs URL to local path", flush=True)
     return style
 

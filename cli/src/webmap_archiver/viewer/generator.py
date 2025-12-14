@@ -115,6 +115,21 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             console.log("[WebMap Archiver] Using captured style from map.getStyle()");
             // Use the captured style directly - sources have been rewritten to local PMTiles
             style = config.capturedStyle;
+
+            // Fix sprite and glyph URLs to be absolute paths
+            // MapLibre's URL parser may reject relative paths during style validation
+            if (style.sprite && !style.sprite.startsWith('http') && !style.sprite.startsWith('data:')) {{
+                // Convert relative to absolute path
+                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+                style.sprite = baseUrl + style.sprite.replace(/^\.\//, '');
+                console.log(`[WebMap Archiver] Resolved sprite URL: ${{style.sprite}}`);
+            }}
+            if (style.glyphs && !style.glyphs.startsWith('http') && !style.glyphs.startsWith('data:')) {{
+                // Convert relative to absolute path
+                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+                style.glyphs = baseUrl + style.glyphs.replace(/^\.\//, '');
+                console.log(`[WebMap Archiver] Resolved glyphs URL: ${{style.glyphs}}`);
+            }}
         }} else {{
             console.log("[WebMap Archiver] No captured style, generating default style");
             // Build sources object
@@ -314,12 +329,52 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }});
         }} // End if (!config.capturedStyle)
 
+        // Transform requests to handle local sprite and glyph loading
+        function transformRequest(url, resourceType) {{
+            // Handle sprite URLs - ensure they're properly formatted
+            if (resourceType === 'SpriteImage' || resourceType === 'SpriteJSON') {{
+                // If it's a relative path, make it absolute relative to the viewer location
+                if (!url.startsWith('http') && !url.startsWith('data:')) {{
+                    // Remove leading ./ if present
+                    const cleanUrl = url.replace(/^\.\//, '');
+                    console.log(`[Sprites] Resolving: ${{url}} -> ${{cleanUrl}}`);
+                    return {{ url: cleanUrl }};
+                }}
+            }}
+
+            // Handle multi-font glyph requests
+            // MapLibre may request multiple fonts in one path like "Font1,Font2/0-255.pbf"
+            // But we only have individual font files, so use the first font in the list
+            if (resourceType === 'Glyphs') {{
+                // Check if URL contains comma-separated fonts
+                const match = url.match(/\/glyphs\/([^/]+)\/(\d+-\d+\.pbf)/);
+                if (match) {{
+                    const fontStacks = match[1];
+                    const range = match[2];
+
+                    // If multiple fonts (contains comma), use only the first one
+                    if (fontStacks.includes(',')) {{
+                        const firstFont = fontStacks.split(',')[0];
+                        const newUrl = url.replace(
+                            `/glyphs/${{fontStacks}}/${{range}}`,
+                            `/glyphs/${{firstFont}}/${{range}}`
+                        );
+                        console.log(`[Glyphs] Multi-font request: ${{fontStacks}} -> using ${{firstFont}}`);
+                        return {{ url: newUrl }};
+                    }}
+                }}
+            }}
+
+            return {{ url: url }};
+        }}
+
         const map = new maplibregl.Map({{
             container: "map",
             style: style,
             center: [{center_lon}, {center_lat}],
             zoom: {initial_zoom},
-            maxBounds: [[{west}, {south}], [{east}, {north}]]
+            maxBounds: [[{west}, {south}], [{east}, {north}]],
+            transformRequest: transformRequest
         }});
 
         map.addControl(new maplibregl.NavigationControl(), "top-right");
