@@ -722,6 +722,12 @@ def _build_archive(
 
         # Add sprites to archive
         if processed.sprites:
+            # Track which base files (1x) we have
+            has_base_png = False
+            has_base_json = False
+            fallback_png = None
+            fallback_json = None
+
             for sprite in processed.sprites:
                 # Determine filename from URL or use default with variant
                 if sprite.content_type == "image":
@@ -732,11 +738,31 @@ def _build_archive(
                 # Use sprite@2x naming for 2x sprites
                 if sprite.variant and sprite.variant != "1x":
                     filename = f"sprite@{sprite.variant}{ext}"
+                    # Track @2x files as fallback for missing 1x
+                    if ext == ".png":
+                        fallback_png = sprite.data
+                    else:
+                        fallback_json = sprite.data
                 else:
                     filename = f"sprite{ext}"
+                    # Track that we have base files
+                    if ext == ".png":
+                        has_base_png = True
+                    else:
+                        has_base_json = True
 
                 sprite_path = f"sprites/{filename}"
                 packager.temp_files.append((sprite_path, sprite.data))
+
+            # If we're missing base sprites but have @2x, duplicate them as base
+            # This handles cases where only high-DPI sprites were captured
+            if not has_base_png and fallback_png:
+                print(f"[Archive] No 1x sprite.png found, using @2x as fallback", flush=True)
+                packager.temp_files.append(("sprites/sprite.png", fallback_png))
+
+            if not has_base_json and fallback_json:
+                print(f"[Archive] No 1x sprite.json found, using @2x as fallback", flush=True)
+                packager.temp_files.append(("sprites/sprite.json", fallback_json))
 
             if verbose:
                 print(f"  Added {len(processed.sprites)} sprite files to archive")
