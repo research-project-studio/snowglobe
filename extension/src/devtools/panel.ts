@@ -29,6 +29,10 @@
     isTile: boolean;
     tileCoords?: { z: number; x: number; y: number };
     tileSource?: string;
+    isSprite?: boolean;
+    spriteInfo?: { filename: string; variant: string; contentType: string };
+    isGlyph?: boolean;
+    glyphInfo?: { fontStack: string; range: string };
   }
 
   // UI Elements
@@ -185,6 +189,10 @@
     // Parse tile info
     const tileInfo = parseTileUrl(url);
 
+    // Check for sprites and glyphs
+    const isSpriteResource = isSprite(url);
+    const isGlyphResource = isGlyph(url);
+
     const captured: CapturedRequest = {
       url,
       method: request.request.method,
@@ -194,16 +202,20 @@
       isTile: tileInfo !== null,
       tileCoords: tileInfo?.coords,
       tileSource: tileInfo?.source,
+      isSprite: isSpriteResource,
+      spriteInfo: isSpriteResource ? extractSpriteInfo(url) : undefined,
+      isGlyph: isGlyphResource,
+      glyphInfo: isGlyphResource ? parseGlyphUrl(url) : undefined,
     };
 
     // Get response body for tiles and important resources
     const shouldGetBody =
       tileInfo !== null ||
+      isSpriteResource ||
+      isGlyphResource ||
       mimeType.includes("json") ||
       mimeType.includes("pbf") ||
       mimeType.includes("protobuf") ||
-      url.includes("sprite") ||
-      url.includes("glyphs") ||
       url.includes("style");
 
     if (shouldGetBody && size < 10 * 1024 * 1024) {
@@ -464,6 +476,43 @@
           : "pbf",
       }));
 
+    // Extract resources (sprites and glyphs)
+    const resources = capturedRequests
+      .filter((r) => (r.isSprite || r.isGlyph) && r.body)
+      .map((r) => {
+        if (r.isSprite && r.spriteInfo) {
+          return {
+            resourceType: "sprite",
+            url: r.url,
+            data: r.body!,
+            variant: r.spriteInfo.variant,
+            contentType: r.spriteInfo.contentType,
+          };
+        } else if (r.isGlyph && r.glyphInfo) {
+          const [rangeStart, rangeEnd] = r.glyphInfo.range
+            .split("-")
+            .map((n) => parseInt(n));
+          return {
+            resourceType: "glyph",
+            url: r.url,
+            data: r.body!,
+            fontStack: r.glyphInfo.fontStack,
+            rangeStart,
+            rangeEnd,
+          };
+        }
+        return null;
+      })
+      .filter((r) => r !== null);
+
+    console.log(
+      `[WebMap Archiver] Bundle resources: ${resources.length} (${
+        resources.filter((r) => r.resourceType === "sprite").length
+      } sprites, ${
+        resources.filter((r) => r.resourceType === "glyph").length
+      } glyphs)`
+    );
+
     // Build HAR with correct structure
     const har = {
       log: {
@@ -539,6 +588,7 @@
       style: styleResult?.style || null,
       har,
       tiles,
+      resources,
     };
   }
 
@@ -651,6 +701,50 @@
         }
       );
     });
+  }
+
+  // ============================================================================
+  // RESOURCE DETECTION
+  // ============================================================================
+
+  const SPRITE_PATTERNS = [
+    /\/sprite(@\dx)?\.(png|json)(\?|$)/i,
+    /\/sprites?\//i,
+  ];
+
+  const GLYPH_PATTERNS = [
+    /\/fonts\/[^/]+\/\d+-\d+\.pbf/i,
+    /\/glyphs?\//i,
+  ];
+
+  function isSprite(url: string): boolean {
+    return SPRITE_PATTERNS.some((p) => p.test(url));
+  }
+
+  function isGlyph(url: string): boolean {
+    return GLYPH_PATTERNS.some((p) => p.test(url));
+  }
+
+  function extractSpriteInfo(
+    url: string
+  ): { filename: string; variant: string; contentType: string } {
+    const match = url.match(/\/(sprite(@\dx)?\.(png|json))(\?|$)/i);
+    const filename = match ? match[1] : "sprite.png";
+    const variant = match && match[2] ? match[2].substring(1) : "1x"; // Remove @ prefix
+    const contentType = filename.endsWith(".json") ? "json" : "image";
+    return { filename, variant, contentType };
+  }
+
+  function parseGlyphUrl(url: string): { fontStack: string; range: string } {
+    // Pattern: /fonts/{fontstack}/{range}.pbf
+    const match = url.match(/\/fonts\/([^/]+)\/(\d+-\d+)\.pbf/i);
+    if (match) {
+      return {
+        fontStack: decodeURIComponent(match[1]),
+        range: match[2],
+      };
+    }
+    return { fontStack: "unknown", range: "0-255" };
   }
 
   function parseTileUrl(

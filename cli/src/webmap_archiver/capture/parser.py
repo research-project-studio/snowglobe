@@ -205,12 +205,17 @@ class CaptureParser:
         # Parse resources if embedded
         if has_embedded_data and 'resources' in data:
             resources_data = data['resources']
-            if 'sprites' in resources_data:
-                for s in resources_data['sprites']:
-                    bundle.resources.append(self._parse_sprite_resource(s))
-            if 'glyphs' in resources_data:
-                for g in resources_data['glyphs']:
-                    bundle.resources.append(self._parse_glyph_resource(g))
+            # Handle both flat array (new format) and nested object (legacy format)
+            if isinstance(resources_data, list):
+                for r in resources_data:
+                    bundle.resources.append(self._parse_resource(r))
+            elif isinstance(resources_data, dict):
+                if 'sprites' in resources_data:
+                    for s in resources_data['sprites']:
+                        bundle.resources.append(self._parse_sprite_resource(s))
+                if 'glyphs' in resources_data:
+                    for g in resources_data['glyphs']:
+                        bundle.resources.append(self._parse_glyph_resource(g))
 
         return bundle
 
@@ -279,7 +284,9 @@ class CaptureParser:
         import base64
 
         raw_data = data.get('data', '')
-        if data.get('type') == 'json' and isinstance(raw_data, dict):
+        content_type = data.get('contentType') or data.get('type')  # Support both field names
+
+        if content_type == 'json' and isinstance(raw_data, dict):
             decoded = json.dumps(raw_data).encode('utf-8')
         elif isinstance(raw_data, str):
             decoded = base64.b64decode(raw_data)
@@ -291,7 +298,7 @@ class CaptureParser:
             url=data.get('url', ''),
             data=decoded,
             variant=data.get('variant'),
-            content_type=data.get('type')
+            content_type=content_type
         )
 
     def _parse_glyph_resource(self, data: dict) -> CaptureResource:

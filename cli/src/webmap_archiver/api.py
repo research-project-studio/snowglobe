@@ -485,6 +485,24 @@ def _patterns_match(pattern1: str, pattern2: str) -> bool:
     return base1 == base2
 
 
+def _rewrite_sprite_url(style: dict) -> dict:
+    """Rewrite sprite URL to point to local files."""
+    if 'sprite' in style:
+        # Local sprite path (without extension - MapLibre adds .png/.json)
+        style['sprite'] = './sprites/sprite'
+        print(f"[StyleRewrite] Rewrote sprite URL to local path", flush=True)
+    return style
+
+
+def _rewrite_glyphs_url(style: dict) -> dict:
+    """Rewrite glyphs URL to point to local files."""
+    if 'glyphs' in style:
+        # Local glyphs path template
+        style['glyphs'] = './glyphs/{fontstack}/{range}.pbf'
+        print(f"[StyleRewrite] Rewrote glyphs URL to local path", flush=True)
+    return style
+
+
 def _build_archive(
     processed,
     capture,
@@ -648,6 +666,19 @@ def _build_archive(
                 )
 
             captured_style = _rewrite_style_sources(capture.style, tile_source_infos)
+
+            # Rewrite sprite URL if we have captured sprites
+            if processed.sprites:
+                captured_style = _rewrite_sprite_url(captured_style)
+                if verbose:
+                    print(f"    Rewrote sprite URL to local path")
+
+            # Rewrite glyphs URL if we have captured glyphs
+            if processed.glyphs:
+                captured_style = _rewrite_glyphs_url(captured_style)
+                if verbose:
+                    print(f"    Rewrote glyphs URL to local path")
+
             if verbose:
                 print("    Style source rewriting complete (see [StyleRewrite] logs for details)")
 
@@ -688,6 +719,41 @@ def _build_archive(
             packager.temp_files.append(("style/captured_style.json", style_json.encode("utf-8")))
             if verbose:
                 print("  Added captured style to archive")
+
+        # Add sprites to archive
+        if processed.sprites:
+            for sprite in processed.sprites:
+                # Determine filename from URL or use default with variant
+                if sprite.content_type == "image":
+                    ext = ".png"
+                else:
+                    ext = ".json"
+
+                # Use sprite@2x naming for 2x sprites
+                if sprite.variant and sprite.variant != "1x":
+                    filename = f"sprite@{sprite.variant}{ext}"
+                else:
+                    filename = f"sprite{ext}"
+
+                sprite_path = f"sprites/{filename}"
+                packager.temp_files.append((sprite_path, sprite.data))
+
+            if verbose:
+                print(f"  Added {len(processed.sprites)} sprite files to archive")
+
+        # Add glyphs to archive
+        if processed.glyphs:
+            for glyph in processed.glyphs:
+                # Organize by font stack: glyphs/{fontstack}/{range}.pbf
+                safe_fontstack = "".join(
+                    c if c.isalnum() or c in " -_" else "_" for c in glyph.font_stack
+                )
+                glyph_range = f"{glyph.range_start}-{glyph.range_end}"
+                glyph_path = f"glyphs/{safe_fontstack}/{glyph_range}.pbf"
+                packager.temp_files.append((glyph_path, glyph.data))
+
+            if verbose:
+                print(f"  Added {len(processed.glyphs)} glyph files to archive")
 
         packager.set_manifest(
             name=archive_name,
