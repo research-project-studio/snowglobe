@@ -772,12 +772,17 @@ def _build_archive(
         # Add glyphs to archive
         if processed.glyphs:
             for glyph in processed.glyphs:
-                # Organize by font stack: glyphs/{fontstack}/{range}.pbf
-                safe_fontstack = "".join(
-                    c if c.isalnum() or c in " -_" else "_" for c in glyph.font_stack
+                # Extract first font from font stack (MapLibre requests fonts individually)
+                # Font stack may be comma-separated like "Font1,Font2" but we store by first font
+                first_font = glyph.font_stack.split(',')[0].strip()
+
+                # Organize by font: glyphs/{font}/{range}.pbf
+                # Keep spaces and hyphens in font names (MapLibre uses them)
+                safe_fontname = "".join(
+                    c if c.isalnum() or c in " -_" else "_" for c in first_font
                 )
                 glyph_range = f"{glyph.range_start}-{glyph.range_end}"
-                glyph_path = f"glyphs/{safe_fontstack}/{glyph_range}.pbf"
+                glyph_path = f"glyphs/{safe_fontname}/{glyph_range}.pbf"
                 packager.temp_files.append((glyph_path, glyph.data))
 
             if verbose:
