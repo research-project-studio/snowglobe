@@ -109,28 +109,8 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         ];
         let colorIndex = 0;
 
-        // Check if we have a captured style from map.getStyle()
-        let style;
-        if (config.capturedStyle) {{
-            console.log("[WebMap Archiver] Using captured style from map.getStyle()");
-            // Use the captured style directly - sources have been rewritten to local PMTiles
-            style = config.capturedStyle;
-
-            // Fix sprite and glyph URLs to be absolute paths
-            // MapLibre's URL parser may reject relative paths during style validation
-            if (style.sprite && !style.sprite.startsWith('http') && !style.sprite.startsWith('data:')) {{
-                // Convert relative to absolute path
-                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
-                style.sprite = baseUrl + style.sprite.replace(/^\.\//, '');
-                console.log(`[WebMap Archiver] Resolved sprite URL: ${{style.sprite}}`);
-            }}
-            if (style.glyphs && !style.glyphs.startsWith('http') && !style.glyphs.startsWith('data:')) {{
-                // Convert relative to absolute path
-                const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
-                style.glyphs = baseUrl + style.glyphs.replace(/^\.\//, '');
-                console.log(`[WebMap Archiver] Resolved glyphs URL: ${{style.glyphs}}`);
-            }}
-        }} else {{
+        // Function to generate default style (fallback when no captured style)
+        function generateDefaultStyle() {{
             console.log("[WebMap Archiver] No captured style, generating default style");
             // Build sources object
             const sources = {{}};
@@ -142,7 +122,7 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }});
 
             // Create style with layers for ALL sources
-            style = {{
+            return {{
                 version: 8,
                 sources: sources,
                 layers: [
@@ -155,278 +135,333 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }};
         }}
 
-        // Track layers for toggle controls
-        const layerGroups = {{}};
+        // Main initialization function
+        async function initMap() {{
+            let style;
 
-        // Helper to build color expression from extracted colors
-        function buildColorExpression(colors, sourceLayer) {{
-            if (!colors || Object.keys(colors).length === 0) {{
-                return null;
-            }}
+            // Check if we have a captured style from map.getStyle()
+            if (config.capturedStyle) {{
+                console.log("[WebMap Archiver] Using captured style from map.getStyle()");
 
-            // Build a case expression: ["case", condition1, color1, condition2, color2, ..., default]
-            const expr = ["case"];
-            for (const [category, color] of Object.entries(colors)) {{
-                if (category !== 'unknown' && category !== 'other' && color) {{
-                    // Assume properties are boolean flags (==1 means true)
-                    expr.push(["==", ["get", category], 1]);
-                    expr.push(color);
+                // Load style from external file to ensure it's processed before map creation
+                try {{
+                    const response = await fetch('style/captured_style.json');
+                    if (!response.ok) {{
+                        throw new Error(`Failed to load style: ${{response.status}}`);
+                    }}
+                    style = await response.json();
+                    console.log(`[WebMap Archiver] Loaded style with ${{style.layers?.length || 0}} layers`);
+                }} catch (error) {{
+                    console.error("[WebMap Archiver] Failed to load captured style, falling back to default:", error);
+                    style = generateDefaultStyle();
                 }}
-            }}
-            // Default color
-            expr.push(colors.unknown || colors.other || "#888888");
 
-            return expr;
-        }}
-
-        // Add layers for each source (only if not using captured style)
-        if (!config.capturedStyle) {{
-            config.tileSources.forEach((src, i) => {{
-            const isDataLayer = src.isOrphan !== false;
-            const extracted = src.extractedStyle;
-            const layerIds = [];
-
-            // Check if we have override layers (from map.getStyle())
-            // These are the exact layer definitions from the original map
-            if (extracted?.overrideLayers && extracted.overrideLayers.length > 0) {{
-                console.log("Using override layers for", src.name, ":", extracted.overrideLayers.length, "layers");
-                
-                extracted.overrideLayers.forEach((layerDef, idx) => {{
-                    // Clone the layer definition and update source reference
-                    const layer = JSON.parse(JSON.stringify(layerDef));
-                    layer.id = src.name + "-" + (layer.id || idx);
-                    layer.source = src.name;
-                    
-                    // Ensure source-layer is set correctly
-                    if (!layer["source-layer"] && extracted.sourceLayer) {{
-                        layer["source-layer"] = extracted.sourceLayer;
-                    }}
-                    
-                    style.layers.push(layer);
-                    layerIds.push(layer.id);
-                }});
-                
-                layerGroups[src.name] = {{
-                    label: src.name + " (original style)",
-                    layers: layerIds,
-                    isData: isDataLayer,
-                    hasExtractedStyle: true,
-                    sourceLayers: extracted.allLayers || []
-                }};
-                return; // Skip the default layer generation
-            }}
-
-            // Determine colors to use (for non-override case)
-            let color;
-            let colorExpr = null;
-
-            if (extracted && extracted.colors && Object.keys(extracted.colors).length > 0) {{
-                // Use extracted colors - build expression
-                colorExpr = buildColorExpression(extracted.colors, extracted.sourceLayer);
-                color = Object.values(extracted.colors)[0];  // Fallback single color
-                console.log("Using extracted colors for", src.name, "confidence:", extracted.confidence);
-            }} else {{
-                // Fall back to default palette
-                color = isDataLayer ? DEFAULT_COLORS[colorIndex++ % DEFAULT_COLORS.length] : "#4a4a6a";
-            }}
-
-            const layerType = extracted?.layerType || "line";
-            
-            // Get all discovered source layers, or fall back to single sourceLayer
-            // This comes from actual tile inspection and is reliable
-            let sourceLayers = extracted?.allLayers || [];
-            if (sourceLayers.length === 0 && extracted?.sourceLayer) {{
-                sourceLayers = [extracted.sourceLayer];
-            }}
-            
-            // If we have discovered source layers, create a layer for each
-            // If not, create layers without source-layer (will try to render all)
-            if (sourceLayers.length > 0) {{
-                console.log("Creating layers for source", src.name, "with discovered layers:", sourceLayers);
-                
-                sourceLayers.forEach((sourceLayer, idx) => {{
-                    const suffix = sourceLayers.length > 1 ? `-${{idx}}` : '';
-                    
-                    // Line layer
-                    if (layerType === "line" || !isDataLayer || !extracted) {{
-                        const lineId = src.name + "-line" + suffix;
-                        style.layers.push({{
-                            id: lineId,
-                            type: "line",
-                            source: src.name,
-                            "source-layer": sourceLayer,
-                            paint: {{
-                                "line-color": colorExpr || color,
-                                "line-width": isDataLayer ? 2 : 1,
-                                "line-opacity": isDataLayer ? 0.9 : 0.5
-                            }}
-                        }});
-                        layerIds.push(lineId);
-                    }}
-
-                    // Fill layer for polygons
-                    if (layerType === "fill" || !extracted) {{
-                        const fillId = src.name + "-fill" + suffix;
-                        style.layers.push({{
-                            id: fillId,
-                            type: "fill",
-                            source: src.name,
-                            "source-layer": sourceLayer,
-                            filter: ["==", ["geometry-type"], "Polygon"],
-                            paint: {{
-                                "fill-color": colorExpr || color,
-                                "fill-opacity": isDataLayer ? 0.4 : 0.2
-                            }}
-                        }});
-                        layerIds.push(fillId);
-                    }}
-
-                    // Circle layer for points
-                    if (layerType === "circle" || !extracted) {{
-                        const circleId = src.name + "-circle" + suffix;
-                        style.layers.push({{
-                            id: circleId,
-                            type: "circle",
-                            source: src.name,
-                            "source-layer": sourceLayer,
-                            filter: ["==", ["geometry-type"], "Point"],
-                            paint: {{
-                                "circle-color": colorExpr || color,
-                                "circle-radius": isDataLayer ? 6 : 3,
-                                "circle-stroke-color": "#ffffff",
-                                "circle-stroke-width": isDataLayer ? 1 : 0
-                            }}
-                        }});
-                        layerIds.push(circleId);
-                    }}
-                }});
-            }} else {{
-                // No source layers discovered - this shouldn't happen for vector tiles
-                // but handle gracefully by omitting source-layer
-                console.warn("No source layers discovered for", src.name, "- layers may not render correctly");
-                
-                const lineId = src.name + "-line";
-                style.layers.push({{
-                    id: lineId,
-                    type: "line",
-                    source: src.name,
-                    paint: {{
-                        "line-color": color,
-                        "line-width": 2,
-                        "line-opacity": 0.9
-                    }}
-                }});
-                layerIds.push(lineId);
-            }}
-
-            layerGroups[src.name] = {{
-                label: src.name + (extracted?.confidence ? ` (${{Math.round(extracted.confidence * 100)}}% styled)` : ""),
-                layers: layerIds,
-                isData: isDataLayer,
-                hasExtractedStyle: !!(extracted && extracted.colors && Object.keys(extracted.colors).length > 0),
-                sourceLayers: sourceLayers
-            }};
-            }});
-        }} // End if (!config.capturedStyle)
-
-        // Transform requests to handle local sprite and glyph loading
-        function transformRequest(url, resourceType) {{
-            // Handle sprite URLs - ensure they're properly formatted
-            if (resourceType === 'SpriteImage' || resourceType === 'SpriteJSON') {{
-                // If it's a relative path, make it absolute relative to the viewer location
-                if (!url.startsWith('http') && !url.startsWith('data:')) {{
-                    // Remove leading ./ if present
-                    const cleanUrl = url.replace(/^\.\//, '');
-                    console.log(`[Sprites] Resolving: ${{url}} -> ${{cleanUrl}}`);
-                    return {{ url: cleanUrl }};
+                // CRITICAL: Resolve sprite and glyph URLs to absolute paths BEFORE map creation
+                // MapLibre requires absolute URLs and validates them during style parsing
+                if (style.sprite && !style.sprite.startsWith('http') && !style.sprite.startsWith('data:')) {{
+                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+                    style.sprite = baseUrl + style.sprite.replace(/^\\.?\\//, '');
+                    console.log(`[WebMap Archiver] Resolved sprite URL: ${{style.sprite}}`);
                 }}
-            }}
-
-            // Handle multi-font glyph requests
-            // MapLibre may request multiple fonts in one path like "Font1,Font2/0-255.pbf"
-            // But we only have individual font files, so use the first font in the list
-            if (resourceType === 'Glyphs') {{
-                // Check if URL contains comma-separated fonts
-                const match = url.match(/\/glyphs\/([^/]+)\/(\d+-\d+\.pbf)/);
-                if (match) {{
-                    const fontStacks = match[1];
-                    const range = match[2];
-
-                    // If multiple fonts (contains comma), use only the first one
-                    if (fontStacks.includes(',')) {{
-                        const firstFont = fontStacks.split(',')[0];
-                        const newUrl = url.replace(
-                            `/glyphs/${{fontStacks}}/${{range}}`,
-                            `/glyphs/${{firstFont}}/${{range}}`
-                        );
-                        console.log(`[Glyphs] Multi-font request: ${{fontStacks}} -> using ${{firstFont}}`);
-                        return {{ url: newUrl }};
-                    }}
+                if (style.glyphs && !style.glyphs.startsWith('http') && !style.glyphs.startsWith('data:')) {{
+                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+                    style.glyphs = baseUrl + style.glyphs.replace(/^\\.?\\//, '');
+                    console.log(`[WebMap Archiver] Resolved glyphs URL: ${{style.glyphs}}`);
                 }}
-            }}
 
-            return {{ url: url }};
-        }}
-
-        const map = new maplibregl.Map({{
-            container: "map",
-            style: style,
-            center: [{center_lon}, {center_lat}],
-            zoom: {initial_zoom},
-            maxBounds: [[{west}, {south}], [{east}, {north}]],
-            transformRequest: transformRequest
-        }});
-
-        map.addControl(new maplibregl.NavigationControl(), "top-right");
-        map.addControl(new maplibregl.ScaleControl(), "bottom-right");
-
-        // Add layer toggle controls
-        map.on("load", () => {{
-            const controlsDiv = document.getElementById("layer-controls");
-
-            Object.entries(layerGroups).forEach(([name, group]) => {{
-                const label = document.createElement("label");
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
-                checkbox.checked = true;
-                checkbox.addEventListener("change", (e) => {{
-                    const visibility = e.target.checked ? "visible" : "none";
-                    group.layers.forEach(layerId => {{
-                        if (map.getLayer(layerId)) {{
-                            map.setLayoutProperty(layerId, "visibility", visibility);
+                // Simplify font stacks to single fonts to match captured glyph files
+                // MapLibre requests fonts as comma-separated lists, but we only have individual files
+                if (style.layers) {{
+                    let fontSimplificationCount = 0;
+                    style.layers.forEach(layer => {{
+                        if (layer.layout && Array.isArray(layer.layout['text-font'])) {{
+                            const fonts = layer.layout['text-font'];
+                            if (fonts.length > 1) {{
+                                layer.layout['text-font'] = [fonts[0]];
+                                fontSimplificationCount++;
+                            }}
                         }}
                     }});
+                    if (fontSimplificationCount > 0) {{
+                        console.log(`[WebMap Archiver] Simplified ${{fontSimplificationCount}} font stacks to single fonts`);
+                    }}
+                }}
+            }} else {{
+                style = generateDefaultStyle();
+            }}
+
+            // Track layers for toggle controls
+            const layerGroups = {{}};
+
+            // Helper to build color expression from extracted colors
+            function buildColorExpression(colors, sourceLayer) {{
+                if (!colors || Object.keys(colors).length === 0) {{
+                    return null;
+                }}
+
+                // Build a case expression: ["case", condition1, color1, condition2, color2, ..., default]
+                const expr = ["case"];
+                for (const [category, color] of Object.entries(colors)) {{
+                    if (category !== 'unknown' && category !== 'other' && color) {{
+                        // Assume properties are boolean flags (==1 means true)
+                        expr.push(["==", ["get", category], 1]);
+                        expr.push(color);
+                    }}
+                }}
+                // Default color
+                expr.push(colors.unknown || colors.other || "#888888");
+
+                return expr;
+            }}
+
+            // Add layers for each source (only if not using captured style)
+            if (!config.capturedStyle) {{
+                config.tileSources.forEach((src, i) => {{
+                const isDataLayer = src.isOrphan !== false;
+                const extracted = src.extractedStyle;
+                const layerIds = [];
+
+                // Check if we have override layers (from map.getStyle())
+                // These are the exact layer definitions from the original map
+                if (extracted?.overrideLayers && extracted.overrideLayers.length > 0) {{
+                    console.log("Using override layers for", src.name, ":", extracted.overrideLayers.length, "layers");
+
+                    extracted.overrideLayers.forEach((layerDef, idx) => {{
+                        // Clone the layer definition and update source reference
+                        const layer = JSON.parse(JSON.stringify(layerDef));
+                        layer.id = src.name + "-" + (layer.id || idx);
+                        layer.source = src.name;
+
+                        // Ensure source-layer is set correctly
+                        if (!layer["source-layer"] && extracted.sourceLayer) {{
+                            layer["source-layer"] = extracted.sourceLayer;
+                        }}
+
+                        style.layers.push(layer);
+                        layerIds.push(layer.id);
+                    }});
+
+                    layerGroups[src.name] = {{
+                        label: src.name + " (original style)",
+                        layers: layerIds,
+                        isData: isDataLayer,
+                        hasExtractedStyle: true,
+                        sourceLayers: extracted.allLayers || []
+                    }};
+                    return; // Skip the default layer generation
+                }}
+
+                // Determine colors to use (for non-override case)
+                let color;
+                let colorExpr = null;
+
+                if (extracted && extracted.colors && Object.keys(extracted.colors).length > 0) {{
+                    // Use extracted colors - build expression
+                    colorExpr = buildColorExpression(extracted.colors, extracted.sourceLayer);
+                    color = Object.values(extracted.colors)[0];  // Fallback single color
+                    console.log("Using extracted colors for", src.name, "confidence:", extracted.confidence);
+                }} else {{
+                    // Fall back to default palette
+                    color = isDataLayer ? DEFAULT_COLORS[colorIndex++ % DEFAULT_COLORS.length] : "#4a4a6a";
+                }}
+
+                const layerType = extracted?.layerType || "line";
+
+                // Get all discovered source layers, or fall back to single sourceLayer
+                // This comes from actual tile inspection and is reliable
+                let sourceLayers = extracted?.allLayers || [];
+                if (sourceLayers.length === 0 && extracted?.sourceLayer) {{
+                    sourceLayers = [extracted.sourceLayer];
+                }}
+
+                // If we have discovered source layers, create a layer for each
+                // If not, create layers without source-layer (will try to render all)
+                if (sourceLayers.length > 0) {{
+                    console.log("Creating layers for source", src.name, "with discovered layers:", sourceLayers);
+
+                    sourceLayers.forEach((sourceLayer, idx) => {{
+                        const suffix = sourceLayers.length > 1 ? `-${{idx}}` : '';
+
+                        // Line layer
+                        if (layerType === "line" || !isDataLayer || !extracted) {{
+                            const lineId = src.name + "-line" + suffix;
+                            style.layers.push({{
+                                id: lineId,
+                                type: "line",
+                                source: src.name,
+                                "source-layer": sourceLayer,
+                                paint: {{
+                                    "line-color": colorExpr || color,
+                                    "line-width": isDataLayer ? 2 : 1,
+                                    "line-opacity": isDataLayer ? 0.9 : 0.5
+                                }}
+                            }});
+                            layerIds.push(lineId);
+                        }}
+
+                        // Fill layer for polygons
+                        if (layerType === "fill" || !extracted) {{
+                            const fillId = src.name + "-fill" + suffix;
+                            style.layers.push({{
+                                id: fillId,
+                                type: "fill",
+                                source: src.name,
+                                "source-layer": sourceLayer,
+                                filter: ["==", ["geometry-type"], "Polygon"],
+                                paint: {{
+                                    "fill-color": colorExpr || color,
+                                    "fill-opacity": isDataLayer ? 0.4 : 0.2
+                                }}
+                            }});
+                            layerIds.push(fillId);
+                        }}
+
+                        // Circle layer for points
+                        if (layerType === "circle" || !extracted) {{
+                            const circleId = src.name + "-circle" + suffix;
+                            style.layers.push({{
+                                id: circleId,
+                                type: "circle",
+                                source: src.name,
+                                "source-layer": sourceLayer,
+                                filter: ["==", ["geometry-type"], "Point"],
+                                paint: {{
+                                    "circle-color": colorExpr || color,
+                                    "circle-radius": isDataLayer ? 6 : 3,
+                                    "circle-stroke-color": "#ffffff",
+                                    "circle-stroke-width": isDataLayer ? 1 : 0
+                                }}
+                            }});
+                            layerIds.push(circleId);
+                        }}
+                    }});
+                }} else {{
+                    // No source layers discovered - this shouldn't happen for vector tiles
+                    // but handle gracefully by omitting source-layer
+                    console.warn("No source layers discovered for", src.name, "- layers may not render correctly");
+
+                    const lineId = src.name + "-line";
+                    style.layers.push({{
+                        id: lineId,
+                        type: "line",
+                        source: src.name,
+                        paint: {{
+                            "line-color": color,
+                            "line-width": 2,
+                            "line-opacity": 0.9
+                        }}
+                    }});
+                    layerIds.push(lineId);
+                }}
+
+                layerGroups[src.name] = {{
+                    label: src.name + (extracted?.confidence ? ` (${{Math.round(extracted.confidence * 100)}}% styled)` : ""),
+                    layers: layerIds,
+                    isData: isDataLayer,
+                    hasExtractedStyle: !!(extracted && extracted.colors && Object.keys(extracted.colors).length > 0),
+                    sourceLayers: sourceLayers
+                }};
                 }});
+            }} // End if (!config.capturedStyle)
 
-                const span = document.createElement("span");
-                let labelText = group.label;
-                if (group.isData) {{
-                    labelText += group.hasExtractedStyle ? " ✓" : " (default style)";
-                }}
-                span.textContent = labelText;
-                
-                // Build tooltip with source layer info
-                let tooltip = group.hasExtractedStyle
-                    ? "Styling extracted from original JavaScript"
-                    : group.isData
-                        ? "Using default styling - original could not be extracted"
-                        : "Basemap layer";
-                
-                if (group.sourceLayers && group.sourceLayers.length > 0) {{
-                    tooltip += "\\n\\nSource layers: " + group.sourceLayers.join(", ");
-                }}
-                span.title = tooltip;
+            // Transform request handler for glyphs only
+            // Sprites are handled by URL resolution before map creation
+            function transformRequest(url, resourceType) {{
+                // Handle multi-font glyph requests as a fallback safety net
+                // MapLibre may request multiple fonts in one path like "Font1,Font2/0-255.pbf"
+                // But we only have individual font files, so use the first font in the list
+                if (resourceType === 'Glyphs') {{
+                    // Check if URL contains comma-separated fonts
+                    const match = url.match(/\/glyphs\/([^/]+)\/(\d+-\d+\.pbf)/);
+                    if (match) {{
+                        const fontStacks = match[1];
+                        const range = match[2];
 
-                label.appendChild(checkbox);
-                label.appendChild(span);
-                controlsDiv.appendChild(label);
+                        // If multiple fonts (contains comma), use only the first one
+                        if (fontStacks.includes(',')) {{
+                            const firstFont = fontStacks.split(',')[0];
+                            const newUrl = url.replace(
+                                `/glyphs/${{fontStacks}}/${{range}}`,
+                                `/glyphs/${{firstFont}}/${{range}}`
+                            );
+                            console.log(`[Glyphs] Multi-font request fallback: ${{fontStacks}} -> using ${{firstFont}}`);
+                            return {{ url: newUrl }};
+                        }}
+                    }}
+                }}
+
+                return {{ url: url }};
+            }}
+
+            // Create map with processed style
+            const map = new maplibregl.Map({{
+                container: "map",
+                style: style,
+                center: [{center_lon}, {center_lat}],
+                zoom: {initial_zoom},
+                maxBounds: [[{west}, {south}], [{east}, {north}]],
+                transformRequest: transformRequest
             }});
-        }});
 
-        // Log errors for debugging
-        map.on("error", (e) => {{
-            console.error("Map error:", e);
-        }});
+            map.addControl(new maplibregl.NavigationControl(), "top-right");
+            map.addControl(new maplibregl.ScaleControl(), "bottom-right");
+
+            // Add layer toggle controls
+            map.on("load", () => {{
+                console.log("[WebMap Archiver] Map loaded successfully");
+                const controlsDiv = document.getElementById("layer-controls");
+
+                Object.entries(layerGroups).forEach(([name, group]) => {{
+                    const label = document.createElement("label");
+                    const checkbox = document.createElement("input");
+                    checkbox.type = "checkbox";
+                    checkbox.checked = true;
+                    checkbox.addEventListener("change", (e) => {{
+                        const visibility = e.target.checked ? "visible" : "none";
+                        group.layers.forEach(layerId => {{
+                            if (map.getLayer(layerId)) {{
+                                map.setLayoutProperty(layerId, "visibility", visibility);
+                            }}
+                        }});
+                    }});
+
+                    const span = document.createElement("span");
+                    let labelText = group.label;
+                    if (group.isData) {{
+                        labelText += group.hasExtractedStyle ? " ✓" : " (default style)";
+                    }}
+                    span.textContent = labelText;
+
+                    // Build tooltip with source layer info
+                    let tooltip = group.hasExtractedStyle
+                        ? "Styling extracted from original JavaScript"
+                        : group.isData
+                            ? "Using default styling - original could not be extracted"
+                            : "Basemap layer";
+
+                    if (group.sourceLayers && group.sourceLayers.length > 0) {{
+                        tooltip += "\\n\\nSource layers: " + group.sourceLayers.join(", ");
+                    }}
+                    span.title = tooltip;
+
+                    label.appendChild(checkbox);
+                    label.appendChild(span);
+                    controlsDiv.appendChild(label);
+                }});
+            }});
+
+            // Log errors for debugging
+            map.on("error", (e) => {{
+                console.error("[WebMap Archiver] Map error:", e.error?.message || e);
+            }});
+        }}
+
+        // Initialize map when DOM is ready
+        if (document.readyState === 'loading') {{
+            document.addEventListener('DOMContentLoaded', initMap);
+        }} else {{
+            initMap();
+        }}
     </script>
 </body>
 </html>
@@ -453,7 +488,7 @@ class ViewerGenerator:
             "maxZoom": config.max_zoom,
             "tileSources": config.tile_sources,
             "createdAt": config.created_at,
-            "capturedStyle": config.captured_style,  # Include captured style if available
+            "capturedStyle": bool(config.captured_style),  # Flag indicating if captured style exists (actual style loaded from file)
         }
 
         return VIEWER_TEMPLATE.format(
