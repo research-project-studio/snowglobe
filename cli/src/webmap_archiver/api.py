@@ -161,7 +161,6 @@ def create_archive_from_bundle(
     if verbose:
         print("Processing capture...")
     processed = process_capture_bundle(capture)
-    print(f"[DIAG] processed.url_patterns: {processed.url_patterns}", flush=True)
 
     # Step 4: Build archive with layer discovery
     if verbose:
@@ -338,15 +337,7 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
     rewritten_style = copy.deepcopy(style)
 
     if "sources" not in rewritten_style:
-        print("[StyleRewrite] No sources in style", flush=True)
         return rewritten_style
-
-    print(f"[StyleRewrite] Processing {len(rewritten_style['sources'])} sources", flush=True)
-
-    # Debug: show what URL patterns we have
-    print(f"[StyleRewrite] Available PMTiles URL patterns:", flush=True)
-    for info in tile_source_infos:
-        print(f"[StyleRewrite]   {info.name}: {info.url_pattern}", flush=True)
 
     rewrite_count = 0
 
@@ -358,23 +349,17 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
         # STRATEGY 1: Match by tiles array (direct tile URLs)
         tile_urls = source_def.get("tiles", [])
         if tile_urls:
-            print(f"[StyleRewrite] Matching source '{source_name}' (tiles array)", flush=True)
-            print(f"[StyleRewrite]   Style tile URLs: {tile_urls[:2]}...", flush=True)
-
             matched_pmtiles = None
             for tile_url in tile_urls:
                 style_pattern = _normalize_tile_url(tile_url)
-                print(f"[StyleRewrite]   Normalized style pattern: {style_pattern}", flush=True)
 
                 for info in tile_source_infos:
                     if not info.url_pattern:
                         continue
 
                     pmtiles_pattern = _normalize_tile_url(info.url_pattern)
-                    print(f"[StyleRewrite]   Comparing to '{info.name}': {pmtiles_pattern}", flush=True)
 
                     if _patterns_match(style_pattern, pmtiles_pattern):
-                        print(f"[StyleRewrite]   MATCH FOUND!", flush=True)
                         matched_pmtiles = info.path
                         break
 
@@ -382,12 +367,9 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
                     break
 
             if matched_pmtiles:
-                print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
                 source_def["url"] = f"pmtiles://{matched_pmtiles}"
                 source_def.pop("tiles", None)
                 rewrite_count += 1
-            else:
-                print(f"[StyleRewrite] WARNING: No match found for '{source_name}'", flush=True)
             continue
 
         # STRATEGY 2: Match by TileJSON URL (domain-based matching)
@@ -396,9 +378,6 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
             # Skip if already rewritten to pmtiles://
             if tilejson_url.startswith("pmtiles://"):
                 continue
-
-            print(f"[StyleRewrite] Matching source '{source_name}' (TileJSON URL)", flush=True)
-            print(f"[StyleRewrite]   TileJSON URL: {tilejson_url}", flush=True)
 
             from urllib.parse import urlparse
             tilejson_parsed = urlparse(tilejson_url)
@@ -412,28 +391,16 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
                 pmtiles_parsed = urlparse(info.url_pattern)
                 pmtiles_domain = pmtiles_parsed.netloc
 
-                print(f"[StyleRewrite]   Comparing domain '{tilejson_domain}' to '{pmtiles_domain}' ({info.name})", flush=True)
-
                 if tilejson_domain == pmtiles_domain:
-                    print(f"[StyleRewrite]   DOMAIN MATCH FOUND!", flush=True)
                     matched_pmtiles = info.path
                     break
 
             if matched_pmtiles:
-                print(f"[StyleRewrite] Rewriting '{source_name}' -> {matched_pmtiles}", flush=True)
                 source_def["url"] = f"pmtiles://{matched_pmtiles}"
                 rewrite_count += 1
-            else:
-                print(f"[StyleRewrite] WARNING: No domain match found for '{source_name}'", flush=True)
             continue
 
-        # No tiles array and no URL - nothing to match
-        print(f"[StyleRewrite] Source '{source_name}' has no tile URLs or TileJSON URL, skipping", flush=True)
-
-    print(
-        f"[StyleRewrite] Successfully rewrote {rewrite_count} of {len(rewritten_style['sources'])} sources",
-        flush=True,
-    )
+    print(f"[StyleRewrite] Rewrote {rewrite_count}/{len(rewritten_style['sources'])} sources", flush=True)
 
     return rewritten_style
 
@@ -488,20 +455,14 @@ def _patterns_match(pattern1: str, pattern2: str) -> bool:
 def _rewrite_sprite_url(style: dict) -> dict:
     """Rewrite sprite URL to point to local files."""
     if 'sprite' in style:
-        # Local sprite path (without extension - MapLibre adds .png/.json)
-        # Use relative path without leading ./ as MapLibre's URL parser may not handle it
         style['sprite'] = 'sprites/sprite'
-        print(f"[StyleRewrite] Rewrote sprite URL to local path", flush=True)
     return style
 
 
 def _rewrite_glyphs_url(style: dict) -> dict:
     """Rewrite glyphs URL to point to local files."""
     if 'glyphs' in style:
-        # Local glyphs path template
-        # Use relative path without leading ./ as MapLibre's URL parser may not handle it
         style['glyphs'] = 'glyphs/{fontstack}/{range}.pbf'
-        print(f"[StyleRewrite] Rewrote glyphs URL to local path", flush=True)
     return style
 
 
@@ -658,14 +619,6 @@ def _build_archive(
         if capture.style:
             if verbose:
                 print("  Found captured style from map.getStyle()")
-            # Rewrite style sources to point to local PMTiles
-            # DIAG: Check tile_source_infos
-            print(f"[DIAG] tile_source_infos count: {len(tile_source_infos)}", flush=True)
-            for info in tile_source_infos:
-                print(
-                    f"[DIAG] TileSourceInfo: name={info.name}, url_pattern={info.url_pattern}",
-                    flush=True,
-                )
 
             captured_style = _rewrite_style_sources(capture.style, tile_source_infos)
 

@@ -48,7 +48,7 @@ image = (
     )
     # Then install the package
     .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git@0e6b74a#subdirectory=cli",
+        "git+https://github.com/research-project-studio/snowglobe.git@507999d#subdirectory=cli",
         "fastapi>=0.109.0",
     )
 )
@@ -188,31 +188,6 @@ def fastapi_app():
                     If bundle.metadata.url exists and bundle.style is null,
                     style will be fetched from that URL.
         """
-        # TEMP DIAGNOSTIC - remove after debugging
-
-        print(f"[DIAG] Bundle keys: {bundle.keys()}", flush=True)
-        if "tiles" in bundle and bundle["tiles"]:
-            first_tile = bundle["tiles"][0]
-            print(f"[DIAG] First tile keys: {first_tile.keys()}", flush=True)
-            print(f"[DIAG] First tile URL: {first_tile.get('url', 'NO URL FIELD')}", flush=True)
-
-            # Check a WXY tile specifically
-            wxy_tiles = [t for t in bundle["tiles"] if "wxy" in t.get("url", "").lower()]
-            if wxy_tiles:
-                print(f"[DIAG] WXY tile URL: {wxy_tiles[0].get('url')}", flush=True)
-            else:
-                print(f"[DIAG] No WXY tiles found in bundle!", flush=True)
-                # Show all unique URL domains
-                domains = set()
-                for t in bundle["tiles"]:
-                    url = t.get("url", "")
-                    if url:
-                        from urllib.parse import urlparse
-
-                        domains.add(urlparse(url).netloc)
-                print(f"[DIAG] Tile URL domains: {domains}", flush=True)
-
-        # END DIAGNOSTIC
         try:
             archive_id = str(uuid.uuid4())[:8]
             output_path = Path(VOLUME_PATH) / f"{archive_id}.zip"

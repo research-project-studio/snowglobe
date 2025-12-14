@@ -1,6 +1,6 @@
 {
   "name": "webmap-archiver-extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Capture web maps for offline archiving",
   "scripts": {
     "dev": "webpack --mode development --watch",
