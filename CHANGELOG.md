@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Root cause: `expand_zoom` parameter was being interpreted as target zoom instead of zoom levels to add
   - Changed from `expand_zoom = max_zoom + 1` (e.g., 15) to `expand_zoom = 1` (add 1 level)
   - Added safety check to skip expansion if >10,000 tiles calculated (indicates error)
-  - Added max_tiles parameter (500) to prevent runaway fetching
+  - Added max_tiles parameter (2000) to prevent runaway fetching
   - Added detailed logging of zoom ranges and tile counts
   - Capped expansion at z18 to prevent excessive tile generation
 

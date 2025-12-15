@@ -225,14 +225,16 @@ def create_archive_from_bundle(
     """
     import asyncio
 
-    return asyncio.run(create_archive_from_bundle_async(
-        bundle=bundle,
-        output_path=output_path,
-        name=name,
-        mode=mode,
-        expand_coverage=expand_coverage,
-        verbose=verbose,
-    ))
+    return asyncio.run(
+        create_archive_from_bundle_async(
+            bundle=bundle,
+            output_path=output_path,
+            name=name,
+            mode=mode,
+            expand_coverage=expand_coverage,
+            verbose=verbose,
+        )
+    )
 
 
 def create_archive_from_har(
@@ -437,6 +439,7 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
                 continue
 
             from urllib.parse import urlparse
+
             tilejson_parsed = urlparse(tilejson_url)
             tilejson_domain = tilejson_parsed.netloc
 
@@ -457,7 +460,10 @@ def _rewrite_style_sources(style: dict, tile_source_infos: list) -> dict:
                 rewrite_count += 1
             continue
 
-    print(f"[StyleRewrite] Rewrote {rewrite_count}/{len(rewritten_style['sources'])} sources", flush=True)
+    print(
+        f"[StyleRewrite] Rewrote {rewrite_count}/{len(rewritten_style['sources'])} sources",
+        flush=True,
+    )
 
     return rewritten_style
 
@@ -511,15 +517,15 @@ def _patterns_match(pattern1: str, pattern2: str) -> bool:
 
 def _rewrite_sprite_url(style: dict) -> dict:
     """Rewrite sprite URL to point to local files."""
-    if 'sprite' in style:
-        style['sprite'] = 'sprites/sprite'
+    if "sprite" in style:
+        style["sprite"] = "sprites/sprite"
     return style
 
 
 def _rewrite_glyphs_url(style: dict) -> dict:
     """Rewrite glyphs URL to point to local files."""
-    if 'glyphs' in style:
-        style['glyphs'] = 'glyphs/{fontstack}/{range}.pbf'
+    if "glyphs" in style:
+        style["glyphs"] = "glyphs/{fontstack}/{range}.pbf"
     return style
 
 
@@ -588,18 +594,26 @@ async def _build_archive(
 
             # Coverage expansion if requested
             if expand_coverage:
-                url_pattern = processed.url_patterns.get(source_name) if processed.url_patterns else None
+                url_pattern = (
+                    processed.url_patterns.get(source_name) if processed.url_patterns else None
+                )
 
                 if url_pattern:
                     try:
-                        from .tiles.fetcher import analyze_coverage, expand_coverage_async, AIOHTTP_AVAILABLE
+                        from .tiles.fetcher import (
+                            analyze_coverage,
+                            expand_coverage_async,
+                            AIOHTTP_AVAILABLE,
+                        )
 
                         if not AIOHTTP_AVAILABLE:
                             if verbose:
-                                print(f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp")
+                                print(
+                                    f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp"
+                                )
                         else:
                             # Coverage expansion with safety limits
-                            MAX_EXPANSION_TILES = 500  # Don't fetch more than this
+                            MAX_EXPANSION_TILES = 2000  # Don't fetch more than this
                             expand_zoom_levels = 1  # Add one zoom level beyond captured
 
                             report = analyze_coverage(tiles, bounds, expand_zoom_levels)
@@ -608,8 +622,14 @@ async def _build_archive(
                                 # Safety check: unreasonable tile count indicates calculation error
                                 if report.total_missing > 10000:
                                     if verbose:
-                                        print(f"    [Warning] Unreasonable tile count ({report.total_missing}), skipping expansion", flush=True)
-                                        print(f"    [Warning] This usually indicates the bounds or zoom range is too large", flush=True)
+                                        print(
+                                            f"    [Warning] Unreasonable tile count ({report.total_missing}), skipping expansion",
+                                            flush=True,
+                                        )
+                                        print(
+                                            f"    [Warning] This usually indicates the bounds or zoom range is too large",
+                                            flush=True,
+                                        )
                                 else:
                                     # Fetch missing tiles using async version
                                     result = await expand_coverage_async(
@@ -620,23 +640,31 @@ async def _build_archive(
                                         expand_zoom=expand_zoom_levels,
                                         rate_limit=10,  # Conservative rate limit
                                         max_tiles=MAX_EXPANSION_TILES,  # Safety limit
-                                        progress_callback=None  # No progress bar in Modal
+                                        progress_callback=None,  # No progress bar in Modal
                                     )
 
                                     # Add fetched tiles
                                     if result.new_tiles:
                                         tiles.extend(result.new_tiles)
                                         if verbose:
-                                            print(f"    ✓ Added {result.fetched_count} tiles to '{source_name}'", flush=True)
+                                            print(
+                                                f"    ✓ Added {result.fetched_count} tiles to '{source_name}'",
+                                                flush=True,
+                                            )
 
                                     if result.failed_count > 0 and verbose:
-                                        print(f"    ⚠ {result.failed_count} tiles failed to fetch", flush=True)
+                                        print(
+                                            f"    ⚠ {result.failed_count} tiles failed to fetch",
+                                            flush=True,
+                                        )
 
                     except ImportError as e:
                         if verbose:
                             print(f"    [Warning] Coverage expansion unavailable: {e}")
                 elif verbose:
-                    print(f"    [Warning] No URL pattern available for '{source_name}', cannot expand coverage")
+                    print(
+                        f"    [Warning] No URL pattern available for '{source_name}', cannot expand coverage"
+                    )
 
             # Get source metadata
             source = processed.tile_sources.get(source_name)
@@ -841,13 +869,11 @@ async def _build_archive(
             for glyph in processed.glyphs:
                 # Extract first font from font stack (MapLibre requests fonts individually)
                 # Font stack may be comma-separated like "Font1,Font2" but we store by first font
-                first_font = glyph.font_stack.split(',')[0].strip()
+                first_font = glyph.font_stack.split(",")[0].strip()
 
                 # Organize by font: glyphs/{font}/{range}.pbf
                 # Keep spaces and hyphens in font names (MapLibre uses them)
-                safe_fontname = "".join(
-                    c if c.isalnum() or c in " -_" else "_" for c in first_font
-                )
+                safe_fontname = "".join(c if c.isalnum() or c in " -_" else "_" for c in first_font)
                 glyph_range = f"{glyph.range_start}-{glyph.range_end}"
                 glyph_path = f"glyphs/{safe_fontname}/{glyph_range}.pbf"
                 packager.temp_files.append((glyph_path, glyph.data))
