@@ -192,9 +192,15 @@ def fastapi_app():
             archive_id = str(uuid.uuid4())[:8]
             output_path = Path(VOLUME_PATH) / f"{archive_id}.zip"
 
+            # Extract options with defaults
+            options = bundle.get('options', {})
+            expand_coverage = options.get('expandCoverage', True)  # Default ON
+            archive_mode = options.get('archiveMode', 'standalone')
+
             print(f"[API] Process request -> {archive_id}", flush=True)
             print(f"[API] Tiles in bundle: {len(bundle.get('tiles', []))}", flush=True)
             print(f"[API] Style in bundle: {bundle.get('style') is not None}", flush=True)
+            print(f"[API] Options - expandCoverage: {expand_coverage}, archiveMode: {archive_mode}", flush=True)
 
             # Check if we need to fetch style
             url = bundle.get("metadata", {}).get("url")
@@ -234,6 +240,8 @@ def fastapi_app():
             result = create_archive_from_bundle(
                 bundle=bundle,
                 output_path=output_path,
+                mode=archive_mode,
+                expand_coverage=expand_coverage,
                 verbose=True,
             )
 

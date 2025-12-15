@@ -8,7 +8,7 @@
   <div class="panel-container">
     <header>
       <h1>🗺️ WebMap Archiver</h1>
-      <span class="version">v0.2.0</span>
+      <span class="version">v0.3.2</span>
     </header>
 
     <!-- Idle State -->
@@ -29,6 +29,36 @@
           <li>Visit different zoom levels to capture detail</li>
           <li>Click <strong>Stop & Archive</strong> when done</li>
         </ol>
+      </div>
+
+      <!-- Capture Options Panel -->
+      <div id="options-panel" class="options-panel">
+        <div class="options-header" id="options-header">
+          <span class="options-toggle">▶</span>
+          <span>Capture Options</span>
+        </div>
+        <div id="options-content" class="options-content collapsed">
+          <label class="option-item">
+            <input type="checkbox" id="opt-reload-page" checked>
+            <span>Reload page on capture start</span>
+            <span class="option-hint">Ensures sprites and fonts are captured</span>
+          </label>
+
+          <label class="option-item">
+            <input type="checkbox" id="opt-expand-coverage" checked>
+            <span>Expand tile coverage</span>
+            <span class="option-hint">Fetch additional zoom levels beyond captured area</span>
+          </label>
+
+          <label class="option-item">
+            <span>Archive mode:</span>
+            <select id="opt-archive-mode">
+              <option value="standalone" selected>Standalone (viewer only)</option>
+              <option value="original">Original (preserve site files)</option>
+              <option value="full">Full (viewer + site files)</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <button id="start-btn" class="primary-btn">

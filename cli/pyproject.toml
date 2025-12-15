@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webmap-archiver"
-version = "0.3.0"
+version = "0.3.2"
 description = "Archive web maps as self-contained packages"
 readme = "README.md"
 license = {text = "MIT"}

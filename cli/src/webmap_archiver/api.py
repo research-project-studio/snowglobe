@@ -121,6 +121,7 @@ def create_archive_from_bundle(
     *,
     name: str | None = None,
     mode: str = "standalone",
+    expand_coverage: bool = False,
     verbose: bool = False,
 ) -> ArchiveResult:
     """
@@ -134,7 +135,10 @@ def create_archive_from_bundle(
         output_path: Where to write the ZIP archive
         name: Optional archive name (defaults to page title or URL)
         mode: Archive mode - "standalone" (viewer only), "original" (site files),
-              or "full" (both)
+              or "full" (both). Note: Currently mode is accepted but not implemented.
+        expand_coverage: If True, fetch additional tiles to expand zoom coverage.
+                        Note: This parameter is accepted but tile fetching is not
+                        implemented in this code path. Use CLI for coverage expansion.
         verbose: If True, print progress information
 
     Returns:
@@ -166,12 +170,18 @@ def create_archive_from_bundle(
     if verbose:
         print("Building archive...")
 
+    # Log if expand_coverage is requested (not yet implemented in this path)
+    if expand_coverage and verbose:
+        print("Note: expand_coverage is not yet implemented for Modal/extension workflow")
+        print("      Use CLI with --expand-coverage flag for tile expansion")
+
     result = _build_archive(
         processed=processed,
         capture=capture,
         output_path=output_path,
         name=name,
         mode=mode,
+        expand_coverage=expand_coverage,
         verbose=verbose,
     )
 
@@ -472,12 +482,17 @@ def _build_archive(
     output_path: Path,
     name: str | None,
     mode: str,
+    expand_coverage: bool,
     verbose: bool,
 ) -> ArchiveResult:
     """
     Internal function to build the archive.
 
     This contains the core logic shared by all entry points.
+
+    Args:
+        mode: Archive mode (accepted but not currently used - flagged for future implementation)
+        expand_coverage: Tile coverage expansion (accepted but not implemented in this path)
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -523,6 +538,53 @@ def _build_archive(
             coords = [c for c, _ in tiles]
             bounds = calc.calculate_bounds(coords)
             zoom_range = calc.get_zoom_range(coords)
+
+            # Coverage expansion if requested
+            if expand_coverage:
+                url_pattern = processed.url_patterns.get(source_name) if processed.url_patterns else None
+
+                if url_pattern:
+                    try:
+                        from .tiles.fetcher import analyze_coverage, expand_coverage as do_expand, AIOHTTP_AVAILABLE
+
+                        if not AIOHTTP_AVAILABLE:
+                            if verbose:
+                                print(f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp")
+                        else:
+                            # Analyze current coverage (using max zoom + 1 for expand_zoom)
+                            expand_zoom = zoom_range[1] + 1
+                            report = analyze_coverage(tiles, bounds, expand_zoom)
+
+                            if report.total_missing > 0 and verbose:
+                                print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
+                                print(f"    Fetching {report.total_missing} additional tiles...")
+
+                            if report.total_missing > 0:
+                                # Fetch missing tiles
+                                result = do_expand(
+                                    url_template=url_pattern,
+                                    source_name=source_name,
+                                    captured_tiles=tiles,
+                                    bounds=bounds,
+                                    expand_zoom=expand_zoom,
+                                    rate_limit=10,  # Conservative rate limit
+                                    progress_callback=None  # No progress bar in Modal
+                                )
+
+                                # Add fetched tiles
+                                if result.new_tiles:
+                                    tiles.extend(result.new_tiles)
+                                    if verbose:
+                                        print(f"    ✓ Fetched {result.fetched_count} additional tiles")
+
+                                if result.failed_count > 0 and verbose:
+                                    print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
+
+                    except ImportError as e:
+                        if verbose:
+                            print(f"    [Warning] Coverage expansion unavailable: {e}")
+                elif verbose:
+                    print(f"    [Warning] No URL pattern available for '{source_name}', cannot expand coverage")
 
             # Get source metadata
             source = processed.tile_sources.get(source_name)

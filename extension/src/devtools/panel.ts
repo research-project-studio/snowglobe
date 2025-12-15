@@ -35,6 +35,12 @@
     glyphInfo?: { fontStack: string; range: string };
   }
 
+  interface CaptureOptions {
+    reloadOnStart: boolean;
+    expandCoverage: boolean;
+    archiveMode: "standalone" | "original" | "full";
+  }
+
   // UI Elements
   const idleState = document.getElementById("idle-state")!;
   const recordingState = document.getElementById("recording-state")!;
@@ -82,10 +88,17 @@
     startBtn.addEventListener("click", startRecording);
     stopBtn.addEventListener("click", stopRecording);
     cancelBtn.addEventListener("click", cancelRecording);
-    downloadBtn.addEventListener("click", handleDownload);
+    // Note: downloadBtn handler is set dynamically in showComplete()
+    // to switch between handleDownload and handleDownloadBundle
     downloadBundleBtn.addEventListener("click", handleDownloadBundle);
     newCaptureBtn.addEventListener("click", resetToIdle);
     retryBtn.addEventListener("click", resetToIdle);
+
+    // Options panel toggle
+    const optionsHeader = document.getElementById("options-header");
+    if (optionsHeader) {
+      optionsHeader.addEventListener("click", toggleOptions);
+    }
   }
 
   async function checkForMaps(): Promise<void> {
@@ -137,28 +150,83 @@
   }
 
   // ============================================================================
+  // CAPTURE OPTIONS
+  // ============================================================================
+
+  function getDefaultOptions(): CaptureOptions {
+    return {
+      reloadOnStart: true,
+      expandCoverage: true,
+      archiveMode: "standalone",
+    };
+  }
+
+  function getCaptureOptions(): CaptureOptions {
+    const defaults = getDefaultOptions();
+
+    try {
+      const reloadCheckbox = document.getElementById(
+        "opt-reload-page"
+      ) as HTMLInputElement;
+      const expandCheckbox = document.getElementById(
+        "opt-expand-coverage"
+      ) as HTMLInputElement;
+      const modeSelect = document.getElementById(
+        "opt-archive-mode"
+      ) as HTMLSelectElement;
+
+      return {
+        reloadOnStart: reloadCheckbox?.checked ?? defaults.reloadOnStart,
+        expandCoverage: expandCheckbox?.checked ?? defaults.expandCoverage,
+        archiveMode:
+          (modeSelect?.value as CaptureOptions["archiveMode"]) ??
+          defaults.archiveMode,
+      };
+    } catch (error) {
+      console.warn(
+        "[WebMap Archiver] Error reading options, using defaults:",
+        error
+      );
+      return defaults;
+    }
+  }
+
+  function toggleOptions(): void {
+    const panel = document.getElementById("options-panel");
+    const content = document.getElementById("options-content");
+
+    if (panel && content) {
+      panel.classList.toggle("expanded");
+      content.classList.toggle("collapsed");
+    }
+  }
+
+  // ============================================================================
   // RECORDING
   // ============================================================================
 
-  function startRecording(): void {
+  async function startRecording(): Promise<void> {
     console.log("[WebMap Archiver] Starting recording...");
 
-    isRecording = true;
-    recordingStartTime = Date.now();
+    // Get capture options
+    const options = getCaptureOptions();
+
+    // Reset capture state
     capturedRequests = [];
     tileCount = 0;
     totalSize = 0;
     zoomLevels.clear();
+    isRecording = true;
+    recordingStartTime = Date.now();
 
     // Reset UI
     statTiles.textContent = "0";
     statRequests.textContent = "0";
     statSize.textContent = "0 B";
     statZooms.textContent = "-";
-    tileList.innerHTML =
-      '<p class="empty-message">Pan or zoom the map to capture tiles...</p>';
 
-    // Start listening to network requests
+    // IMPORTANT: Start listening to network requests BEFORE reloading
+    // This ensures we capture sprites, glyphs, and style from the initial page load
     chrome.devtools.network.onRequestFinished.addListener(handleRequest);
 
     // Start duration timer
@@ -169,6 +237,31 @@
       type: "CAPTURE_STARTED",
       tabId: chrome.devtools.inspectedWindow.tabId,
     });
+
+    // Reload page if option enabled
+    if (options.reloadOnStart) {
+      tileList.innerHTML =
+        '<p class="empty-message">Reloading page to capture all resources...</p>';
+
+      try {
+        console.log(
+          "[WebMap Archiver] Reloading page to capture initial resources..."
+        );
+        await chrome.devtools.inspectedWindow.reload({
+          ignoreCache: true,
+        });
+
+        // Brief delay after reload before updating UI
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      } catch (error) {
+        console.error("[WebMap Archiver] Failed to reload page:", error);
+        // Continue anyway - capture what we can
+      }
+    }
+
+    // Update UI for capture mode
+    tileList.innerHTML =
+      '<p class="empty-message">Pan or zoom the map to capture tiles...</p>';
 
     showState("recording");
     console.log("[WebMap Archiver] Recording started");
@@ -457,6 +550,8 @@
     styleResult: any,
     pageInfo: { url: string; title: string }
   ): any {
+    // Get capture options
+    const options = getCaptureOptions();
     // Extract tiles with bodies - NOTE: field names must match Python parser
     const tiles = capturedRequests
       .filter((r) => r.isTile && r.body && r.tileCoords)
@@ -517,7 +612,7 @@
     const har = {
       log: {
         version: "1.2",
-        creator: { name: "WebMap Archiver", version: "0.2.0" },
+        creator: { name: "WebMap Archiver", version: "0.3.2" },
         entries: capturedRequests.map((r) => ({
           startedDateTime: new Date().toISOString(),
           request: {
@@ -589,6 +684,11 @@
       har,
       tiles,
       resources,
+      // NEW: Include capture options for Modal/CLI
+      options: {
+        expandCoverage: options.expandCoverage,
+        archiveMode: options.archiveMode,
+      },
     };
   }
 

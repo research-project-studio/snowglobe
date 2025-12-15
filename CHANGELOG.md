@@ -5,6 +5,51 @@ All notable changes to the WebMap Archiver project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-12-15
+
+### Added
+- **Capture Options UI**: New collapsible options panel in DevTools extension
+  - "Reload on start" checkbox (toggleable, default ON) - ensures sprites/fonts are captured
+  - "Expand coverage" checkbox (toggleable, default ON) - prepares for future tile fetching
+  - "Archive mode" selector (standalone/original/full) - for future implementation
+- **Options Pass-Through**: Capture options now included in bundle and passed to Modal/CLI
+  - Extension sends options in bundle JSON
+  - Modal API extracts and logs options
+  - CLI API accepts `expand_coverage` and `mode` parameters
+
+### Changed
+- **Reload Behavior**: Page reload on capture start is now optional (default: enabled)
+- **API Signatures**: Updated `create_archive_from_bundle()` to accept `expand_coverage` and `mode` parameters
+
+### Technical Details
+- Extension version: 0.3.2
+- Options panel uses light grey theme with proper contrast
+- Options included in bundle at `bundle.options.expandCoverage` and `bundle.options.archiveMode`
+- Modal logs: `[API] Options - expandCoverage: true, archiveMode: standalone`
+- CLI parameters accepted but not yet fully implemented (flagged for future work)
+
+### Known Limitations
+- **Expand coverage**: Parameter accepted but tile fetching not implemented in Modal/extension workflow. Use CLI with `--expand-coverage` flag for actual coverage expansion.
+- **Archive mode**: Parameter accepted but different modes (original/full) not yet implemented. Only "standalone" mode currently functional.
+
+## [0.3.1] - 2025-12-14
+
+### Fixed
+- **Double Save Dialog**: Fixed duplicate download trigger that caused two save dialogs to appear
+  - Removed duplicate event listener registration on download button
+  - Download button now uses only `.onclick` handler (set dynamically in `showComplete()`)
+- **Page Reload on Capture Start**: Extension now automatically reloads the page when capture starts
+  - Ensures sprites, glyphs, and initial style are captured from the beginning
+  - Reload bypasses browser cache to get fresh resources
+  - Fixes issue where resources loaded before capture started were not captured
+
+### Technical Details
+- Extension version: 0.3.1
+- Download button handler switched from `addEventListener` to `.onclick` to prevent double firing
+- Added `chrome.devtools.inspectedWindow.reload({ ignoreCache: true })` at capture start
+- Network listener starts BEFORE reload to capture all resources from page load
+- 300ms delay after reload before updating UI (but capture already in progress)
+
 ## [0.3.0] - 2025-12-14
 
 ### Added
@@ -76,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.3.2]: https://github.com/research-project-studio/snowglobe/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/research-project-studio/snowglobe/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/research-project-studio/snowglobe/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/research-project-studio/snowglobe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/research-project-studio/snowglobe/releases/tag/v0.1.0
