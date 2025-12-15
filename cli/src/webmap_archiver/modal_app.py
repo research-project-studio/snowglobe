@@ -7,6 +7,10 @@ Provides:
 - GET /download/{id} - Download processed archive
 """
 
+import nest_asyncio
+
+nest_asyncio.apply()
+
 import modal
 import asyncio
 import uuid
@@ -48,8 +52,9 @@ image = (
     )
     # Then install the package
     .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git@3eb8205#subdirectory=cli",
+        "git+https://github.com/research-project-studio/snowglobe.git@c6e3549#subdirectory=cli",
         "fastapi>=0.109.0",
+        "nest_asyncio",
     )
 )
 
