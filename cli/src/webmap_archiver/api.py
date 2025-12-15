@@ -541,40 +541,50 @@ def _build_archive(
 
                 if url_pattern:
                     try:
+                        import asyncio
                         from .tiles.fetcher import analyze_coverage, expand_coverage as do_expand, AIOHTTP_AVAILABLE
 
                         if not AIOHTTP_AVAILABLE:
                             if verbose:
                                 print(f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp")
                         else:
-                            # Analyze current coverage (using max zoom + 1 for expand_zoom)
-                            expand_zoom = zoom_range[1] + 1
-                            report = analyze_coverage(tiles, bounds, expand_zoom)
+                            # Check if we're in an async context (e.g., Modal's async endpoint)
+                            try:
+                                asyncio.get_running_loop()
+                                # In async context - skip expansion for now
+                                if verbose:
+                                    print(f"    [Warning] Coverage expansion not yet supported in async context (Modal)")
+                                    print(f"    [Info] Captured tiles will still be archived, just without expansion")
+                            except RuntimeError:
+                                # No running loop, safe to proceed with sync expand_coverage
+                                # Analyze current coverage (using max zoom + 1 for expand_zoom)
+                                expand_zoom = zoom_range[1] + 1
+                                report = analyze_coverage(tiles, bounds, expand_zoom)
 
-                            if report.total_missing > 0 and verbose:
-                                print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
-                                print(f"    Fetching {report.total_missing} additional tiles...")
+                                if report.total_missing > 0 and verbose:
+                                    print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
+                                    print(f"    Fetching {report.total_missing} additional tiles...")
 
-                            if report.total_missing > 0:
-                                # Fetch missing tiles
-                                result = do_expand(
-                                    url_template=url_pattern,
-                                    source_name=source_name,
-                                    captured_tiles=tiles,
-                                    bounds=bounds,
-                                    expand_zoom=expand_zoom,
-                                    rate_limit=10,  # Conservative rate limit
-                                    progress_callback=None  # No progress bar in Modal
-                                )
+                                if report.total_missing > 0:
+                                    # Fetch missing tiles
+                                    result = do_expand(
+                                        url_template=url_pattern,
+                                        source_name=source_name,
+                                        captured_tiles=tiles,
+                                        bounds=bounds,
+                                        expand_zoom=expand_zoom,
+                                        rate_limit=10,  # Conservative rate limit
+                                        progress_callback=None  # No progress bar in Modal
+                                    )
 
-                                # Add fetched tiles
-                                if result.new_tiles:
-                                    tiles.extend(result.new_tiles)
-                                    if verbose:
-                                        print(f"    ✓ Fetched {result.fetched_count} additional tiles")
+                                    # Add fetched tiles
+                                    if result.new_tiles:
+                                        tiles.extend(result.new_tiles)
+                                        if verbose:
+                                            print(f"    ✓ Fetched {result.fetched_count} additional tiles")
 
-                                if result.failed_count > 0 and verbose:
-                                    print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
+                                    if result.failed_count > 0 and verbose:
+                                        print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
 
                     except ImportError as e:
                         if verbose:

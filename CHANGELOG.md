@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Limitations
 - **Archive mode**: Parameter accepted but different modes (original/full) not yet implemented. Only "standalone" mode currently functional.
+- **Coverage expansion**: Not yet supported in Modal/async context. Works in CLI. Extension will capture tiles but skip expansion when processing via Modal.
 
 ### Requirements
 - **Coverage expansion** requires `aiohttp`: `pip install aiohttp`
