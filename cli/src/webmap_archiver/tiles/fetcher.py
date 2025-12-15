@@ -409,11 +409,12 @@ async def expand_coverage_async(
     bounds: GeoBounds,
     expand_zoom: int = 0,
     rate_limit: float = 10.0,
+    max_tiles: int = 500,
     progress_callback: Callable[[str, int, int], None] | None = None
 ) -> ExpansionResult:
     """
     Expand tile coverage to fill gaps in bounding box.
-    
+
     Args:
         url_template: Tile URL template with {z}, {x}, {y}
         source_name: Name of the tile source
@@ -421,27 +422,40 @@ async def expand_coverage_async(
         bounds: Geographic bounds to fill
         expand_zoom: Additional zoom levels beyond captured (0 = just fill gaps)
         rate_limit: Requests per second limit
+        max_tiles: Maximum tiles to fetch (safety limit)
         progress_callback: Called with (source_name, completed, total)
-    
+
     Returns:
         ExpansionResult with fetched tiles and statistics
     """
     # Build set of captured coordinates
     captured_set = set(coord for coord, _ in captured_tiles)
-    
+
+    # Get zoom range from captured tiles for logging
+    if captured_tiles:
+        captured_zooms = [coord.z for coord, _ in captured_tiles]
+        min_zoom = min(captured_zooms)
+        max_zoom = max(captured_zooms)
+        target_max_zoom = min(18, max_zoom + expand_zoom)  # Cap at z18
+        print(f"    Captured zoom range: z{min_zoom}-z{max_zoom}", flush=True)
+        print(f"    Target zoom range: z{min_zoom}-z{target_max_zoom} (expand by {expand_zoom})", flush=True)
+
     # Analyze coverage
     analyzer = CoverageAnalyzer(bounds)
     report = analyzer.analyze(captured_set, expand_zoom)
-    
+
     # Find missing tiles
     missing = analyzer.find_missing_tiles(captured_set, report.zoom_levels)
-    
+
     # Flatten missing tiles list
     all_missing = []
     for zoom, coords in missing.items():
         all_missing.extend(coords)
-    
+
+    print(f"    Missing tiles in target range: {len(all_missing)}", flush=True)
+
     if not all_missing:
+        print(f"    No tiles to fetch - coverage is complete", flush=True)
         return ExpansionResult(
             source_name=source_name,
             original_count=len(captured_tiles),
@@ -451,14 +465,23 @@ async def expand_coverage_async(
             new_tiles=[],
             errors=[]
         )
-    
+
+    # Safety limit
+    if len(all_missing) > max_tiles:
+        print(f"    Limiting to {max_tiles} tiles (was {len(all_missing)})", flush=True)
+        # Prioritize higher zoom levels (more detail)
+        all_missing.sort(key=lambda c: -c.z)
+        all_missing = all_missing[:max_tiles]
+
+    print(f"    Fetching {len(all_missing)} tiles...", flush=True)
+
     # Fetch missing tiles
     fetcher = TileFetcher(rate_limit=rate_limit)
-    
+
     def fetch_progress(completed, total, coord):
         if progress_callback:
             progress_callback(source_name, completed, total)
-    
+
     results = await fetcher.fetch_tiles(
         url_template,
         all_missing,
@@ -478,12 +501,15 @@ async def expand_coverage_async(
                 auth_failures += 1
             if result.error:
                 errors.append(f"{result.coord}: {result.error}")
-    
+
+    failed_count = len(all_missing) - len(new_tiles)
+    print(f"    Fetched {len(new_tiles)} tiles, {failed_count} failed", flush=True)
+
     return ExpansionResult(
         source_name=source_name,
         original_count=len(captured_tiles),
         fetched_count=len(new_tiles),
-        failed_count=len(all_missing) - len(new_tiles),
+        failed_count=failed_count,
         auth_failures=auth_failures,
         new_tiles=new_tiles,
         errors=errors[:10]  # Limit error list

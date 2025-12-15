@@ -598,34 +598,39 @@ async def _build_archive(
                             if verbose:
                                 print(f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp")
                         else:
-                            # Analyze current coverage (using max zoom + 1 for expand_zoom)
-                            expand_zoom = zoom_range[1] + 1
-                            report = analyze_coverage(tiles, bounds, expand_zoom)
+                            # Coverage expansion with safety limits
+                            MAX_EXPANSION_TILES = 500  # Don't fetch more than this
+                            expand_zoom_levels = 1  # Add one zoom level beyond captured
 
-                            if report.total_missing > 0 and verbose:
-                                print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
-                                print(f"    Fetching {report.total_missing} additional tiles...")
+                            report = analyze_coverage(tiles, bounds, expand_zoom_levels)
 
                             if report.total_missing > 0:
-                                # Fetch missing tiles using async version
-                                result = await expand_coverage_async(
-                                    url_template=url_pattern,
-                                    source_name=source_name,
-                                    captured_tiles=tiles,
-                                    bounds=bounds,
-                                    expand_zoom=expand_zoom,
-                                    rate_limit=10,  # Conservative rate limit
-                                    progress_callback=None  # No progress bar in Modal
-                                )
-
-                                # Add fetched tiles
-                                if result.new_tiles:
-                                    tiles.extend(result.new_tiles)
+                                # Safety check: unreasonable tile count indicates calculation error
+                                if report.total_missing > 10000:
                                     if verbose:
-                                        print(f"    ✓ Fetched {result.fetched_count} additional tiles")
+                                        print(f"    [Warning] Unreasonable tile count ({report.total_missing}), skipping expansion", flush=True)
+                                        print(f"    [Warning] This usually indicates the bounds or zoom range is too large", flush=True)
+                                else:
+                                    # Fetch missing tiles using async version
+                                    result = await expand_coverage_async(
+                                        url_template=url_pattern,
+                                        source_name=source_name,
+                                        captured_tiles=tiles,
+                                        bounds=bounds,
+                                        expand_zoom=expand_zoom_levels,
+                                        rate_limit=10,  # Conservative rate limit
+                                        max_tiles=MAX_EXPANSION_TILES,  # Safety limit
+                                        progress_callback=None  # No progress bar in Modal
+                                    )
 
-                                if result.failed_count > 0 and verbose:
-                                    print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
+                                    # Add fetched tiles
+                                    if result.new_tiles:
+                                        tiles.extend(result.new_tiles)
+                                        if verbose:
+                                            print(f"    ✓ Added {result.fetched_count} tiles to '{source_name}'", flush=True)
+
+                                    if result.failed_count > 0 and verbose:
+                                        print(f"    ⚠ {result.failed_count} tiles failed to fetch", flush=True)
 
                     except ImportError as e:
                         if verbose:

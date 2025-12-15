@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Coverage Expansion**: Fully functional tile fetching to expand zoom coverage
   - Analyzes captured tiles to identify coverage gaps
   - Fetches missing tiles to complete bounding box coverage
-  - Adds additional zoom levels beyond captured area
+  - Adds one zoom level beyond captured range (e.g., z12-z14 → z12-z15)
   - Conservative rate limiting (10 req/s) to avoid overloading tile servers
+  - Safety limit of 500 tiles per source to prevent timeouts
   - Works in both CLI and Modal (async) contexts
 - **Options Pass-Through**: Capture options now included in bundle and passed to Modal/CLI
   - Extension sends options in bundle JSON
@@ -31,13 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Original `create_archive_from_bundle()` remains as sync wrapper for CLI
   - Uses `expand_coverage_async()` for tile fetching in async contexts
 
+### Fixed
+- **Coverage Expansion Bug**: Fixed critical bug causing 134+ million tile calculation
+  - Root cause: `expand_zoom` parameter was being interpreted as target zoom instead of zoom levels to add
+  - Changed from `expand_zoom = max_zoom + 1` (e.g., 15) to `expand_zoom = 1` (add 1 level)
+  - Added safety check to skip expansion if >10,000 tiles calculated (indicates error)
+  - Added max_tiles parameter (500) to prevent runaway fetching
+  - Added detailed logging of zoom ranges and tile counts
+  - Capped expansion at z18 to prevent excessive tile generation
+
 ### Technical Details
 - Extension version: 0.3.2
 - Options panel uses light grey theme with proper contrast
 - Options included in bundle at `bundle.options.expandCoverage` and `bundle.options.archiveMode`
-- Modal logs: `[API] Options - expandCoverage: true, archiveMode: standalone`
-- Coverage expansion fetches tiles at `max_zoom + 1` to extend coverage
-- Async implementation prevents "asyncio.run() in running loop" errors
+- Coverage expansion now correctly adds 1 zoom level, not jumping to z22
+- Logs show: "Captured zoom range: z12-z14" → "Target zoom range: z12-z15 (expand by 1)"
+- Safety limits prevent Modal timeouts from excessive tile fetching
 
 ### Known Limitations
 - **Archive mode**: Parameter accepted but different modes (original/full) not yet implemented. Only "standalone" mode currently functional.
