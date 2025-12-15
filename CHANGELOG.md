@@ -29,8 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI parameters accepted but not yet fully implemented (flagged for future work)
 
 ### Known Limitations
-- **Expand coverage**: Parameter accepted but tile fetching not implemented in Modal/extension workflow. Use CLI with `--expand-coverage` flag for actual coverage expansion.
 - **Archive mode**: Parameter accepted but different modes (original/full) not yet implemented. Only "standalone" mode currently functional.
+
+### Requirements
+- **Coverage expansion** requires `aiohttp`: `pip install aiohttp`
+- Modal deployment includes aiohttp in dependencies
 
 ## [0.3.1] - 2025-12-14
 

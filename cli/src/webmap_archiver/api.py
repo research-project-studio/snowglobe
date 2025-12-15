@@ -135,10 +135,9 @@ def create_archive_from_bundle(
         output_path: Where to write the ZIP archive
         name: Optional archive name (defaults to page title or URL)
         mode: Archive mode - "standalone" (viewer only), "original" (site files),
-              or "full" (both). Note: Currently mode is accepted but not implemented.
+              or "full" (both). Note: Currently only "standalone" is implemented.
         expand_coverage: If True, fetch additional tiles to expand zoom coverage.
-                        Note: This parameter is accepted but tile fetching is not
-                        implemented in this code path. Use CLI for coverage expansion.
+                        Requires aiohttp: pip install aiohttp
         verbose: If True, print progress information
 
     Returns:
@@ -169,11 +168,8 @@ def create_archive_from_bundle(
     # Step 4: Build archive with layer discovery
     if verbose:
         print("Building archive...")
-
-    # Log if expand_coverage is requested (not yet implemented in this path)
-    if expand_coverage and verbose:
-        print("Note: expand_coverage is not yet implemented for Modal/extension workflow")
-        print("      Use CLI with --expand-coverage flag for tile expansion")
+        if expand_coverage:
+            print("Coverage expansion enabled - will fetch additional zoom levels")
 
     result = _build_archive(
         processed=processed,
@@ -491,8 +487,8 @@ def _build_archive(
     This contains the core logic shared by all entry points.
 
     Args:
-        mode: Archive mode (accepted but not currently used - flagged for future implementation)
-        expand_coverage: Tile coverage expansion (accepted but not implemented in this path)
+        mode: Archive mode (accepted but only "standalone" currently implemented)
+        expand_coverage: Tile coverage expansion (fetches additional zoom levels if enabled)
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
