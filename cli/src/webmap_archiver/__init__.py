@@ -12,6 +12,7 @@ __version__ = "0.3.2"
 # Public API exports
 from .api import (
     create_archive_from_bundle,
+    create_archive_from_bundle_async,
     create_archive_from_har,
     inspect_bundle,
     normalize_bundle,
@@ -28,6 +29,7 @@ __all__ = [
     "__version__",
     # Main functions
     "create_archive_from_bundle",
+    "create_archive_from_bundle_async",
     "create_archive_from_har",
     "inspect_bundle",
     "normalize_bundle",

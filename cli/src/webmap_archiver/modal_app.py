@@ -48,7 +48,7 @@ image = (
     )
     # Then install the package
     .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git@d5e9e76#subdirectory=cli",
+        "git+https://github.com/research-project-studio/snowglobe.git@3eb8205#subdirectory=cli",
         "fastapi>=0.109.0",
     )
 )
@@ -74,11 +74,11 @@ def fastapi_app():
     import asyncio
 
     from webmap_archiver import (
-        create_archive_from_bundle,
         inspect_bundle,
         CaptureValidationError,
         __version__,
     )
+    from webmap_archiver.api import create_archive_from_bundle_async
 
     # Import style extractor - will be None if pyppeteer not available
     try:
@@ -240,7 +240,7 @@ def fastapi_app():
                     # Continue without style - will use generated fallback
 
             # Create archive
-            result = create_archive_from_bundle(
+            result = await create_archive_from_bundle_async(
                 bundle=bundle,
                 output_path=output_path,
                 mode=archive_mode,

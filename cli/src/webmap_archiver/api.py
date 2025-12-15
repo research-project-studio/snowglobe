@@ -115,7 +115,7 @@ def normalize_bundle(bundle: dict) -> dict:
 # ============================================================================
 
 
-def create_archive_from_bundle(
+async def create_archive_from_bundle_async(
     bundle: dict,
     output_path: Path,
     *,
@@ -125,6 +125,8 @@ def create_archive_from_bundle(
     verbose: bool = False,
 ) -> ArchiveResult:
     """
+    Async version of create_archive_from_bundle.
+
     Create an archive from a capture bundle.
 
     This is the main entry point for the browser extension workflow.
@@ -171,7 +173,7 @@ def create_archive_from_bundle(
         if expand_coverage:
             print("Coverage expansion enabled - will fetch additional zoom levels")
 
-    result = _build_archive(
+    result = await _build_archive(
         processed=processed,
         capture=capture,
         output_path=output_path,
@@ -182,6 +184,55 @@ def create_archive_from_bundle(
     )
 
     return result
+
+
+def create_archive_from_bundle(
+    bundle: dict,
+    output_path: Path,
+    *,
+    name: str | None = None,
+    mode: str = "standalone",
+    expand_coverage: bool = False,
+    verbose: bool = False,
+) -> ArchiveResult:
+    """
+    Create an archive from a capture bundle (synchronous wrapper).
+
+    This is the main entry point for the browser extension workflow.
+    It handles all steps: parsing, processing, layer discovery, and packaging.
+
+    Note: This is a synchronous wrapper that uses asyncio.run() internally.
+    If called from an async context, it will raise RuntimeError. Use
+    create_archive_from_bundle_async() instead.
+
+    Args:
+        bundle: Capture bundle dict (from browser extension or file)
+        output_path: Where to write the ZIP archive
+        name: Optional archive name (defaults to page title or URL)
+        mode: Archive mode - "standalone" (viewer only), "original" (site files),
+              or "full" (both). Note: Currently only "standalone" is implemented.
+        expand_coverage: If True, fetch additional tiles to expand zoom coverage.
+                        Requires aiohttp: pip install aiohttp
+        verbose: If True, print progress information
+
+    Returns:
+        ArchiveResult with metadata about the created archive
+
+    Raises:
+        CaptureValidationError: If the bundle is invalid
+        ValueError: If required data is missing
+        RuntimeError: If called from an async context
+    """
+    import asyncio
+
+    return asyncio.run(create_archive_from_bundle_async(
+        bundle=bundle,
+        output_path=output_path,
+        name=name,
+        mode=mode,
+        expand_coverage=expand_coverage,
+        verbose=verbose,
+    ))
 
 
 def create_archive_from_har(
@@ -472,7 +523,7 @@ def _rewrite_glyphs_url(style: dict) -> dict:
     return style
 
 
-def _build_archive(
+async def _build_archive(
     processed,
     capture,
     output_path: Path,
@@ -541,50 +592,40 @@ def _build_archive(
 
                 if url_pattern:
                     try:
-                        import asyncio
-                        from .tiles.fetcher import analyze_coverage, expand_coverage as do_expand, AIOHTTP_AVAILABLE
+                        from .tiles.fetcher import analyze_coverage, expand_coverage_async, AIOHTTP_AVAILABLE
 
                         if not AIOHTTP_AVAILABLE:
                             if verbose:
                                 print(f"    [Warning] Coverage expansion requires aiohttp: pip install aiohttp")
                         else:
-                            # Check if we're in an async context (e.g., Modal's async endpoint)
-                            try:
-                                asyncio.get_running_loop()
-                                # In async context - skip expansion for now
-                                if verbose:
-                                    print(f"    [Warning] Coverage expansion not yet supported in async context (Modal)")
-                                    print(f"    [Info] Captured tiles will still be archived, just without expansion")
-                            except RuntimeError:
-                                # No running loop, safe to proceed with sync expand_coverage
-                                # Analyze current coverage (using max zoom + 1 for expand_zoom)
-                                expand_zoom = zoom_range[1] + 1
-                                report = analyze_coverage(tiles, bounds, expand_zoom)
+                            # Analyze current coverage (using max zoom + 1 for expand_zoom)
+                            expand_zoom = zoom_range[1] + 1
+                            report = analyze_coverage(tiles, bounds, expand_zoom)
 
-                                if report.total_missing > 0 and verbose:
-                                    print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
-                                    print(f"    Fetching {report.total_missing} additional tiles...")
+                            if report.total_missing > 0 and verbose:
+                                print(f"    Coverage: {report.coverage_percent:.1f}% ({report.total_captured}/{report.total_required} tiles)")
+                                print(f"    Fetching {report.total_missing} additional tiles...")
 
-                                if report.total_missing > 0:
-                                    # Fetch missing tiles
-                                    result = do_expand(
-                                        url_template=url_pattern,
-                                        source_name=source_name,
-                                        captured_tiles=tiles,
-                                        bounds=bounds,
-                                        expand_zoom=expand_zoom,
-                                        rate_limit=10,  # Conservative rate limit
-                                        progress_callback=None  # No progress bar in Modal
-                                    )
+                            if report.total_missing > 0:
+                                # Fetch missing tiles using async version
+                                result = await expand_coverage_async(
+                                    url_template=url_pattern,
+                                    source_name=source_name,
+                                    captured_tiles=tiles,
+                                    bounds=bounds,
+                                    expand_zoom=expand_zoom,
+                                    rate_limit=10,  # Conservative rate limit
+                                    progress_callback=None  # No progress bar in Modal
+                                )
 
-                                    # Add fetched tiles
-                                    if result.new_tiles:
-                                        tiles.extend(result.new_tiles)
-                                        if verbose:
-                                            print(f"    ✓ Fetched {result.fetched_count} additional tiles")
+                                # Add fetched tiles
+                                if result.new_tiles:
+                                    tiles.extend(result.new_tiles)
+                                    if verbose:
+                                        print(f"    ✓ Fetched {result.fetched_count} additional tiles")
 
-                                    if result.failed_count > 0 and verbose:
-                                        print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
+                                if result.failed_count > 0 and verbose:
+                                    print(f"    ⚠ Failed to fetch {result.failed_count} tiles")
 
                     except ImportError as e:
                         if verbose:

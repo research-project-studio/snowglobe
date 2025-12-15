@@ -10,8 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Capture Options UI**: New collapsible options panel in DevTools extension
   - "Reload on start" checkbox (toggleable, default ON) - ensures sprites/fonts are captured
-  - "Expand coverage" checkbox (toggleable, default ON) - prepares for future tile fetching
+  - "Expand coverage" checkbox (toggleable, default ON) - fetches additional tiles to fill coverage gaps
   - "Archive mode" selector (standalone/original/full) - for future implementation
+- **Coverage Expansion**: Fully functional tile fetching to expand zoom coverage
+  - Analyzes captured tiles to identify coverage gaps
+  - Fetches missing tiles to complete bounding box coverage
+  - Adds additional zoom levels beyond captured area
+  - Conservative rate limiting (10 req/s) to avoid overloading tile servers
+  - Works in both CLI and Modal (async) contexts
 - **Options Pass-Through**: Capture options now included in bundle and passed to Modal/CLI
   - Extension sends options in bundle JSON
   - Modal API extracts and logs options
@@ -19,18 +25,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Reload Behavior**: Page reload on capture start is now optional (default: enabled)
-- **API Signatures**: Updated `create_archive_from_bundle()` to accept `expand_coverage` and `mode` parameters
+- **API Architecture**: Major refactor to support async contexts
+  - Added `create_archive_from_bundle_async()` for async callers (Modal)
+  - Made `_build_archive()` async to support tile fetching
+  - Original `create_archive_from_bundle()` remains as sync wrapper for CLI
+  - Uses `expand_coverage_async()` for tile fetching in async contexts
 
 ### Technical Details
 - Extension version: 0.3.2
 - Options panel uses light grey theme with proper contrast
 - Options included in bundle at `bundle.options.expandCoverage` and `bundle.options.archiveMode`
 - Modal logs: `[API] Options - expandCoverage: true, archiveMode: standalone`
-- CLI parameters accepted but not yet fully implemented (flagged for future work)
+- Coverage expansion fetches tiles at `max_zoom + 1` to extend coverage
+- Async implementation prevents "asyncio.run() in running loop" errors
 
 ### Known Limitations
 - **Archive mode**: Parameter accepted but different modes (original/full) not yet implemented. Only "standalone" mode currently functional.
-- **Coverage expansion**: Not yet supported in Modal/async context. Works in CLI. Extension will capture tiles but skip expansion when processing via Modal.
 
 ### Requirements
 - **Coverage expansion** requires `aiohttp`: `pip install aiohttp`
