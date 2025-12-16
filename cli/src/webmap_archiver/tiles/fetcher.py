@@ -483,6 +483,14 @@ async def expand_coverage_async(
     failed_count = len(all_missing) - len(new_tiles)
     print(f"    Fetched {len(new_tiles)} tiles, {failed_count} failed", flush=True)
 
+    # Log error details for debugging
+    if errors and failed_count > 0:
+        print(f"    Error samples (first 5):", flush=True)
+        for error in errors[:5]:
+            print(f"      - {error}", flush=True)
+        if auth_failures > 0:
+            print(f"    Authentication failures: {auth_failures}", flush=True)
+
     return ExpansionResult(
         source_name=source_name,
         original_count=len(captured_tiles),

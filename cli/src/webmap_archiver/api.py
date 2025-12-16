@@ -671,6 +671,9 @@ async def _build_archive(
             tile_type = source.tile_type if source else "vector"
             tile_format = source.format if source else "pbf"
 
+            if verbose:
+                print(f"    Source type: {tile_type}, format: {tile_format}", flush=True)
+
             # Format vector layers as TileJSON spec
             vector_layers_metadata = None
             if tile_type == "vector" and discovered_layers:
