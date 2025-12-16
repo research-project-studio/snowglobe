@@ -7,7 +7,7 @@ Usage:
     result = create_archive_from_bundle(bundle_dict, Path("output.zip"))
 """
 
-__version__ = "0.3.2"
+__version__ = "1.0.0"
 
 # Public API exports
 from .api import (

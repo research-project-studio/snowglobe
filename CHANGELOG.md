@@ -5,6 +5,47 @@ All notable changes to the WebMap Archiver project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2025-12-16
+
+### Added - Phase 1: Raster Tile Support
+- **Raster Tile Archiving**: Full support for PNG, JPG, and WebP raster tiles
+  - Raster tiles automatically detected via existing classifier patterns
+  - Stored in PMTiles format (raster mode) alongside vector tiles
+  - No double-compression applied to already-compressed images
+  - Format detection from URL extension (.png, .jpg, .webp)
+  - Tile type passed through processor → PMTiles builder → viewer
+- **Raster Viewer Support**: Viewer now renders both raster and vector sources
+  - Automatically generates raster layers for raster PMTiles
+  - Raster sources configured with type: "raster" and tileSize: 256
+  - Works in both generated style (no captured style) and captured style modes
+  - Raster layers render with full opacity by default
+
+### Changed
+- **Version**: Bumped to 1.0.0 to reflect production-ready status with multi-tile-type support
+- **PMTiles Builder**: Already supported raster formats (PNG/JPEG/WebP) - verified working
+- **Tile Processing**: Processor already infers tile type (raster vs vector) from URL and content
+- **Viewer Generator**: Updated to handle both vector and raster sources in style generation
+
+### Technical Details
+- Extension version: 1.0.0
+- CLI version: 1.0.0
+- Raster detection patterns: `/\d+/\d+/\d+\.(png|jpg|webp)`
+- PMTiles tile types: MVT (vector), PNG, JPEG, WEBP
+- Raster tiles use Compression.NONE (no gzip)
+- Vector tiles use Compression.GZIP
+- Format inference: URL extension → content magic bytes → default to PNG
+
+### v1.0.0 Roadmap (Future Phases)
+- **Phase 2**: GeoJSON sources (inline + external) with tippecanoe conversion
+- **Phase 3**: WMTS support (pre-tiled raster services)
+- **Phase 4**: WMS support (dynamic raster generation)
+- **Phase 5**: WFS support (vector feature services)
+- **Phase 6**: Unified source processor (architectural refactor)
+
+### Requirements
+- Same as 0.3.2 - no new dependencies required for Phase 1
+- Future phases will require `tippecanoe` for GeoJSON/WFS conversion
+
 ## [0.3.2] - 2025-12-15
 
 ### Added

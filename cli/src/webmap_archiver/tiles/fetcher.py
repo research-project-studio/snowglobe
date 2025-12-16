@@ -281,6 +281,7 @@ class TileFetcher:
                         )
                     elif response.status == 404:
                         # Tile doesn't exist - don't retry
+                        print(f"Tile doesnt exist: {url}", flush=True)
                         return FetchResult(
                             coord=coord, content=None, status=404, error="Tile not found"
                         )

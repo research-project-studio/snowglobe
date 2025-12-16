@@ -114,24 +114,49 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             console.log("[WebMap Archiver] No captured style, generating default style");
             // Build sources object
             const sources = {{}};
+            const layers = [
+                {{
+                    id: "background",
+                    type: "background",
+                    paint: {{ "background-color": "#1a1a2e" }}
+                }}
+            ];
+
             config.tileSources.forEach(src => {{
-                sources[src.name] = {{
-                    type: "vector",
-                    url: "pmtiles://" + src.path
-                }};
+                // Determine source type from metadata
+                const sourceType = src.type || "vector";
+
+                if (sourceType === "raster") {{
+                    // Raster source (PNG/JPG/WebP tiles)
+                    sources[src.name] = {{
+                        type: "raster",
+                        url: "pmtiles://" + src.path,
+                        tileSize: 256
+                    }};
+
+                    // Add raster layer
+                    layers.push({{
+                        id: src.name + "-raster",
+                        type: "raster",
+                        source: src.name,
+                        paint: {{
+                            "raster-opacity": 1
+                        }}
+                    }});
+                }} else {{
+                    // Vector source (MVT/PBF tiles)
+                    sources[src.name] = {{
+                        type: "vector",
+                        url: "pmtiles://" + src.path
+                    }};
+                }}
             }});
 
             // Create style with layers for ALL sources
             return {{
                 version: 8,
                 sources: sources,
-                layers: [
-                    {{
-                        id: "background",
-                        type: "background",
-                        paint: {{ "background-color": "#1a1a2e" }}
-                    }}
-                ]
+                layers: layers
             }};
         }}
 
