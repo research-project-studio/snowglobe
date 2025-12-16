@@ -31,10 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added type check to skip raster sources in vector layer generation code
   - Raster sources now only handled by `generateDefaultStyle()` which creates proper raster layers
   - Fixes error: "layer requires a vector source" when viewing raster-only archives
-- **Tile Fetcher Diagnostics**: Added error logging to coverage expansion
+- **Format Detection**: Fixed format inference for tiles without URL extensions
+  - Added content magic bytes detection as fallback when URL has no extension
+  - Fixes misdetection of JPEG as PBF for ArcGIS tile servers
+  - Now correctly identifies PNG (89504e47), JPEG (ffd8ff), WebP (RIFF...WEBP)
+- **Raster PMTiles URL**: Fixed PMTiles protocol URL for raster sources in viewer
+  - Changed from relative path to absolute URL (required by PMTiles protocol)
+  - Example: `pmtiles://tiles/source.pmtiles` → `pmtiles://http://localhost/.../tiles/source.pmtiles`
+  - Added console logging to help debug PMTiles source loading
+  - Fixes blank map when viewing raster-only archives
+- **Tile Fetcher Diagnostics**: Added comprehensive error logging to coverage expansion
   - Now logs first 5 error messages when tile fetching fails
-  - Logs authentication failure count separately
+  - Logs authentication failure count and rate separately
   - Added source type/format logging for better diagnostics
+  - Warns when >50% of fetches fail due to authentication
 
 ### Technical Details
 - Extension version: 1.0.0

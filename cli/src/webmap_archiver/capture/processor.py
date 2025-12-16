@@ -67,11 +67,17 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
                 else:
                     print(f"[Processor] WARNING: No URL for source '{source_id}', pattern matching will fail", flush=True)
 
+                # Infer format from tile.format, URL, or content
+                if hasattr(tile, 'format') and tile.format:
+                    format_val = tile.format
+                else:
+                    format_val = _infer_format(tile.url or "", tile.data)
+
                 tile_sources[source_id] = TileSource(
                     name=source_id,
                     url_template=url_template or f"tiles/{source_id}",
                     tile_type=_infer_tile_type(tile.url or "", tile.data),
-                    format=tile.format if hasattr(tile, 'format') and tile.format else _infer_format(tile.url or "")
+                    format=format_val
                 )
 
                 # Store URL pattern for source matching
@@ -197,8 +203,8 @@ def _infer_tile_type(url: str, data: bytes) -> str:
     return 'vector'  # Default to vector
 
 
-def _infer_format(url: str) -> str:
-    """Infer tile format from URL."""
+def _infer_format(url: str, data: bytes | None = None) -> str:
+    """Infer tile format from URL and optionally content."""
     url_lower = url.lower()
     if '.png' in url_lower:
         return 'png'
@@ -210,7 +216,18 @@ def _infer_format(url: str) -> str:
         return 'pbf'
     if '.mvt' in url_lower:
         return 'mvt'
-    return 'pbf'
+
+    # If no extension in URL, check content magic bytes
+    if data and len(data) >= 8:
+        if data[:8] == b'\x89PNG\r\n\x1a\n':
+            return 'png'
+        if data[:2] == b'\xff\xd8':  # JPEG
+            return 'jpeg'
+        # WebP starts with 'RIFF' then 'WEBP'
+        if data[:4] == b'RIFF' and len(data) >= 12 and data[8:12] == b'WEBP':
+            return 'webp'
+
+    return 'pbf'  # Default
 
 
 def _title_from_url(url: str) -> str:

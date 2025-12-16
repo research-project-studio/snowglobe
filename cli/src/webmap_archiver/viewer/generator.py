@@ -99,6 +99,8 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         let protocol = new pmtiles.Protocol();
         maplibregl.addProtocol("pmtiles", protocol.tile);
 
+        console.log("[WebMap Archiver] PMTiles protocol registered");
+
         // Archive configuration
         const config = {config_json};
 
@@ -128,11 +130,18 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
 
                 if (sourceType === "raster") {{
                     // Raster source (PNG/JPG/WebP tiles)
+                    // PMTiles protocol requires absolute URL to the .pmtiles file
+                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+                    const pmtilesUrl = baseUrl + src.path;
+
                     sources[src.name] = {{
                         type: "raster",
-                        url: "pmtiles://" + src.path,
+                        url: "pmtiles://" + pmtilesUrl,
                         tileSize: 256
                     }};
+
+                    console.log("[WebMap Archiver] Adding raster source:", src.name);
+                    console.log("  PMTiles URL:", "pmtiles://" + pmtilesUrl);
 
                     // Add raster layer
                     layers.push({{
@@ -143,6 +152,8 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
                             "raster-opacity": 1
                         }}
                     }});
+
+                    console.log("[WebMap Archiver] Added raster layer:", src.name + "-raster");
                 }} else {{
                     // Vector source (MVT/PBF tiles)
                     sources[src.name] = {{

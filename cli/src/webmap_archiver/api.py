@@ -643,6 +643,15 @@ async def _build_archive(
                                         progress_callback=None,  # No progress bar in Modal
                                     )
 
+                                    # Check for authentication issues
+                                    if result.auth_failures > 0:
+                                        auth_rate = result.auth_failures / (result.fetched_count + result.failed_count) if (result.fetched_count + result.failed_count) > 0 else 0
+                                        if auth_rate >= 0.5 and verbose:  # 50%+ auth failures
+                                            print(
+                                                f"    [Warning] High authentication failure rate ({auth_rate:.0%}) - source may require API keys or authentication",
+                                                flush=True,
+                                            )
+
                                     # Add fetched tiles
                                     if result.new_tiles:
                                         tiles.extend(result.new_tiles)
