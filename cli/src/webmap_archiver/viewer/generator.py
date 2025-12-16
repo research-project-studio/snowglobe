@@ -242,6 +242,13 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             // Add layers for each source (only if not using captured style)
             if (!config.capturedStyle) {{
                 config.tileSources.forEach((src, i) => {{
+                // Skip raster sources - they're already handled in generateDefaultStyle()
+                const sourceType = src.type || "vector";
+                if (sourceType === "raster") {{
+                    console.log("Skipping layer generation for raster source:", src.name);
+                    return;
+                }}
+
                 const isDataLayer = src.isOrphan !== false;
                 const extracted = src.extractedStyle;
                 const layerIds = [];

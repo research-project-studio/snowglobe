@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tile Processing**: Processor already infers tile type (raster vs vector) from URL and content
 - **Viewer Generator**: Updated to handle both vector and raster sources in style generation
 
+### Fixed
+- **Viewer Layer Generation**: Fixed bug where vector layers were being created for raster sources
+  - Added type check to skip raster sources in vector layer generation code
+  - Raster sources now only handled by `generateDefaultStyle()` which creates proper raster layers
+  - Fixes error: "layer requires a vector source" when viewing raster-only archives
+- **Tile Fetcher Diagnostics**: Added error logging to coverage expansion
+  - Now logs first 5 error messages when tile fetching fails
+  - Logs authentication failure count separately
+  - Added source type/format logging for better diagnostics
+
 ### Technical Details
 - Extension version: 1.0.0
 - CLI version: 1.0.0
