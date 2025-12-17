@@ -57,12 +57,17 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
         for tile in bundle.tiles:
             source_id = tile.source_id
 
-            # Debug: Log first few ESRI tiles to understand coordinate system
-            if 'server' in source_id.lower() and esri_tile_count < 3:
-                print(f"[Processor] ESRI tile {esri_tile_count + 1}:")
-                print(f"  URL: {tile.url}")
-                print(f"  Coord: z={tile.coord.z}, x={tile.coord.x}, y={tile.coord.y}", flush=True)
-                esri_tile_count += 1
+            # ESRI coordinate swap: ESRI uses {z}/{y}/{x} format, need to swap before storing
+            coord = tile.coord
+            if tile.url and ('arcgisonline.com' in tile.url.lower() or 'arcgis.com' in tile.url.lower()):
+                # Swap x and y for ESRI tiles
+                coord = TileCoord(z=tile.coord.z, x=tile.coord.y, y=tile.coord.x)
+                if esri_tile_count < 3:
+                    print(f"[Processor] ESRI tile {esri_tile_count + 1} - swapping coordinates:")
+                    print(f"  URL: {tile.url}")
+                    print(f"  Original: z={tile.coord.z}, x={tile.coord.x}, y={tile.coord.y}")
+                    print(f"  Corrected: z={coord.z}, x={coord.x}, y={coord.y}", flush=True)
+                    esri_tile_count += 1
 
             if source_id not in tiles_by_source:
                 tiles_by_source[source_id] = []
@@ -92,7 +97,7 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
                 if url_template:
                     url_patterns[source_id] = url_template
 
-            tiles_by_source[source_id].append((tile.coord, tile.data))
+            tiles_by_source[source_id].append((coord, tile.data))
 
     # If no pre-extracted tiles, extract from HAR
     har_entries = None
