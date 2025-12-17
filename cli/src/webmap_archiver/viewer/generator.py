@@ -184,6 +184,52 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }};
         }}
 
+        // Load GeoJSON sources from local files
+        async function loadGeoJSONSources(style) {{
+            if (!style || !style.sources) {{
+                return style;
+            }}
+
+            console.log("[WebMap Archiver] Checking for GeoJSON sources...");
+
+            // Find GeoJSON sources that reference local files
+            const geojsonPromises = [];
+            const geojsonSourceNames = [];
+
+            for (const [sourceName, sourceDef] of Object.entries(style.sources)) {{
+                if (sourceDef.type === 'geojson' && typeof sourceDef.data === 'string' && sourceDef.data.startsWith('data/')) {{
+                    console.log(`[WebMap Archiver] Loading GeoJSON source: ${{sourceName}} from ${{sourceDef.data}}`);
+                    geojsonSourceNames.push(sourceName);
+                    geojsonPromises.push(
+                        fetch(sourceDef.data)
+                            .then(response => response.json())
+                            .catch(error => {{
+                                console.error(`[WebMap Archiver] Failed to load GeoJSON for ${{sourceName}}:`, error);
+                                return null;
+                            }})
+                    );
+                }}
+            }}
+
+            // Wait for all GeoJSON files to load
+            if (geojsonPromises.length > 0) {{
+                const geojsonData = await Promise.all(geojsonPromises);
+
+                // Replace data paths with actual GeoJSON objects
+                geojsonData.forEach((data, index) => {{
+                    if (data) {{
+                        const sourceName = geojsonSourceNames[index];
+                        style.sources[sourceName].data = data;
+                        console.log(`[WebMap Archiver] Loaded GeoJSON for ${{sourceName}}`);
+                    }}
+                }});
+
+                console.log(`[WebMap Archiver] Loaded ${{geojsonPromises.length}} GeoJSON sources`);
+            }}
+
+            return style;
+        }}
+
         // Main initialization function
         async function initMap() {{
             let style;
@@ -238,6 +284,9 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             }} else {{
                 style = generateDefaultStyle();
             }}
+
+            // Load GeoJSON sources if present
+            style = await loadGeoJSONSources(style);
 
             // Track layers for toggle controls
             const layerGroups = {{}};

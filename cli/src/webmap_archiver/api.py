@@ -529,6 +529,95 @@ def _rewrite_glyphs_url(style: dict) -> dict:
     return style
 
 
+async def _process_geojson_sources(
+    style: dict,
+    temp_path: Path,
+    verbose: bool = False
+) -> dict[str, Path]:
+    """
+    Process GeoJSON sources from style.
+
+    Returns:
+        Dict mapping source_name to GeoJSON file path
+    """
+    from .capture.parser import extract_geojson_sources
+    from .sources.geojson_fetcher import GeoJSONFetcher
+
+    geojson_sources = extract_geojson_sources(style)
+
+    if not geojson_sources:
+        return {}
+
+    if verbose:
+        print(f"  Found {len(geojson_sources)} GeoJSON sources")
+
+    results = {}
+
+    # Fetch external GeoJSON files
+    external_sources = [(s.source_name, s.url) for s in geojson_sources if s.url]
+    if external_sources:
+        if verbose:
+            print(f"    Fetching {len(external_sources)} external GeoJSON files...")
+
+        fetcher = GeoJSONFetcher()
+        fetched = await fetcher.fetch_all(external_sources)
+
+        # Update sources with fetched data
+        for f in fetched:
+            for s in geojson_sources:
+                if s.source_name == f.source_name:
+                    s.data = f.data
+                    s.size_bytes = f.size_bytes
+                    break
+
+        if verbose:
+            print(f"    Successfully fetched {len(fetched)} GeoJSON files")
+
+    # Process each source - store all as GeoJSON files for now
+    data_dir = temp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    for source in geojson_sources:
+        if source.data is None:
+            if verbose:
+                print(f"    Skipping {source.source_name} - no data available")
+            continue
+
+        # Store as GeoJSON file
+        size_kb = source.size_bytes / 1024
+        if verbose:
+            print(f"    Storing {source.source_name} as GeoJSON ({size_kb:.1f} KB)")
+
+        geojson_path = data_dir / f"{source.source_name}.geojson"
+        with open(geojson_path, 'w') as f:
+            json.dump(source.data, f)
+        results[source.source_name] = geojson_path
+
+    return results
+
+
+def _rewrite_geojson_sources(
+    style: dict,
+    geojson_paths: dict[str, Path]
+) -> dict:
+    """Rewrite GeoJSON sources to use local files."""
+
+    if 'sources' not in style or not geojson_paths:
+        return style
+
+    for source_name, local_path in geojson_paths.items():
+        if source_name not in style['sources']:
+            continue
+
+        # Rewrite to use local GeoJSON file
+        style['sources'][source_name] = {
+            'type': 'geojson',
+            'data': f'data/{local_path.name}'
+        }
+
+    return style
+
+
 async def _build_archive(
     processed,
     capture,
@@ -770,6 +859,7 @@ async def _build_archive(
 
         # Handle captured style
         captured_style = None
+        geojson_paths = {}  # Track GeoJSON files for packaging
         if capture.style:
             if verbose:
                 print("  Found captured style from map.getStyle()")
@@ -787,6 +877,11 @@ async def _build_archive(
                 captured_style = _rewrite_glyphs_url(captured_style)
                 if verbose:
                     print(f"    Rewrote glyphs URL to local path")
+
+            # Process GeoJSON sources
+            geojson_paths = await _process_geojson_sources(captured_style, temp_path, verbose)
+            if geojson_paths:
+                captured_style = _rewrite_geojson_sources(captured_style, geojson_paths)
 
             if verbose:
                 print("    Style source rewriting complete (see [StyleRewrite] logs for details)")
@@ -892,6 +987,17 @@ async def _build_archive(
 
             if verbose:
                 print(f"  Added {len(processed.glyphs)} glyph files to archive")
+
+        # Add GeoJSON files to archive
+        if geojson_paths:
+            for source_name, geojson_file in geojson_paths.items():
+                # Read the GeoJSON file and add to archive
+                with open(geojson_file, 'rb') as f:
+                    geojson_data = f.read()
+                packager.temp_files.append((f"data/{geojson_file.name}", geojson_data))
+
+            if verbose:
+                print(f"  Added {len(geojson_paths)} GeoJSON files to archive")
 
         packager.set_manifest(
             name=archive_name,

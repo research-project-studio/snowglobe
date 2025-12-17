@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Works in both generated style (no captured style) and captured style modes
   - Raster layers render with full opacity by default
 
+### Added - Phase 2: GeoJSON Source Support
+- **GeoJSON Extraction**: Detect and extract GeoJSON sources from captured styles
+  - Supports inline GeoJSON data (embedded in style)
+  - Supports external GeoJSON URLs (loaded from remote sources)
+  - Added `extract_geojson_sources()` function to parse GeoJSON from styles
+- **External GeoJSON Fetching**: Async fetcher for external GeoJSON files
+  - Concurrent fetching of multiple GeoJSON sources
+  - Configurable timeout (30s default) and size limits (50MB default)
+  - Graceful error handling for failed fetches
+  - Added `GeoJSONFetcher` class in new `sources` module
+- **GeoJSON Archiving**: Store GeoJSON files in archive bundle
+  - All GeoJSON stored as `.geojson` files in `data/` directory
+  - Files referenced by source name in rewritten style
+  - Size tracking and logging for each GeoJSON source
+- **GeoJSON Viewer Support**: Load and render GeoJSON sources in viewer
+  - Added `loadGeoJSONSources()` function to fetch local GeoJSON files
+  - Automatically replaces file paths with loaded GeoJSON data before map creation
+  - Works with both captured styles and generated styles
+  - Preserves original layer styling from captured style
+
 ### Changed
 - **Version**: Bumped to 1.0.0 to reflect production-ready status with multi-tile-type support
 - **PMTiles Builder**: Already supported raster formats (PNG/JPEG/WebP) - verified working
