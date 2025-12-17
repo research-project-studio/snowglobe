@@ -114,6 +114,9 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
         // Function to generate default style (fallback when no captured style)
         function generateDefaultStyle() {{
             console.log("[WebMap Archiver] No captured style, generating default style");
+            console.log("[WebMap Archiver] Config:", config);
+            console.log("[WebMap Archiver] Tile sources count:", config.tileSources?.length || 0);
+
             // Build sources object
             const sources = {{}};
             const layers = [
@@ -124,9 +127,22 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
                 }}
             ];
 
+            if (!config.tileSources || config.tileSources.length === 0) {{
+                console.warn("[WebMap Archiver] No tile sources found in config!");
+                return {{
+                    version: 8,
+                    sources: {{}},
+                    layers: layers
+                }};
+            }}
+
+            console.log("[WebMap Archiver] Processing", config.tileSources.length, "tile sources");
             config.tileSources.forEach(src => {{
+                console.log("[WebMap Archiver] Processing source:", src);
+
                 // Determine source type from metadata
                 const sourceType = src.type || "vector";
+                console.log("[WebMap Archiver] Source type:", sourceType);
 
                 if (sourceType === "raster") {{
                     // Raster source (PNG/JPG/WebP tiles)
