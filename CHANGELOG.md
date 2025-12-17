@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vector tiles use Compression.GZIP
 - Format inference: URL extension → content magic bytes → default to PNG
 
+### Known Limitations
+- **Coverage Expansion with Authenticated Tile Services**: Tile fetching during coverage expansion may fail for services that require authentication (e.g., MapTiler with API keys). This occurs because authentication tokens are often tied to origin/referrer headers, which don't pass through correctly when Modal/CLI makes direct requests. Public tile servers (ArcGIS, CloudFront) work correctly. The archiver continues with whatever tiles were successfully captured, and the viewer works with partial coverage.
+
+### Future Improvements
+- **Authenticated Tile Service Expansion**: Add support for authenticated tile services during coverage expansion
+  - Options: proxy requests through browser context, token injection, or origin header spoofing
+  - Would allow complete coverage expansion for services like MapTiler, Mapbox
+- **Smart Authentication Detection**: Detect authentication failures early and skip expansion for those sources automatically
+- **Configurable Expansion Parameters**: Allow users to configure expansion zoom levels and tile limits per source
+
 ### v1.0.0 Roadmap (Future Phases)
 - **Phase 2**: GeoJSON sources (inline + external) with tippecanoe conversion
 - **Phase 3**: WMTS support (pre-tiled raster services)

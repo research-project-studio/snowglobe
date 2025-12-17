@@ -18,6 +18,23 @@ from ..tiles.detector import TileCoord
 
 
 @dataclass
+class CapturedGeoJSON:
+    """A GeoJSON source from the map style."""
+    source_name: str
+    data: dict | None  # Inline GeoJSON data
+    url: str | None    # URL if external
+    size_bytes: int
+
+    @property
+    def is_inline(self) -> bool:
+        return self.data is not None
+
+    @property
+    def is_external(self) -> bool:
+        return self.url is not None
+
+
+@dataclass
 class CaptureMetadata:
     """Metadata about the capture."""
     url: str
@@ -414,3 +431,37 @@ def validate_capture_bundle(bundle: CaptureBundle) -> list[str]:
             break
 
     return warnings
+
+
+def extract_geojson_sources(style: dict) -> list[CapturedGeoJSON]:
+    """Extract GeoJSON sources from a MapLibre style."""
+    geojson_sources = []
+
+    if 'sources' not in style:
+        return geojson_sources
+
+    for source_name, source_def in style['sources'].items():
+        if source_def.get('type') != 'geojson':
+            continue
+
+        data = source_def.get('data')
+
+        if isinstance(data, dict):
+            # Inline GeoJSON
+            data_str = json.dumps(data)
+            geojson_sources.append(CapturedGeoJSON(
+                source_name=source_name,
+                data=data,
+                url=None,
+                size_bytes=len(data_str.encode('utf-8'))
+            ))
+        elif isinstance(data, str):
+            # URL reference
+            geojson_sources.append(CapturedGeoJSON(
+                source_name=source_name,
+                data=None,
+                url=data,
+                size_bytes=0  # Unknown until fetched
+            ))
+
+    return geojson_sources
