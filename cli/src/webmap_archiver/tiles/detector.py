@@ -73,14 +73,16 @@ class TileDetector:
         else:
             return None
 
-        # IMPORTANT: ESRI/ArcGIS tile servers use {z}/{y}/{x} order instead of {z}/{x}/{y}
-        # Detect and swap coordinates for these servers
+        # TEMPORARILY REVERT: Test without swap to debug coordinate issue
+        coord = TileCoord(z=int(z), x=int(x), y=int(y))
+
+        # Debug logging for ESRI tiles to understand coordinate system
         url_lower = url.lower()
-        if 'arcgisonline.com' in url_lower or 'arcgis.com' in url_lower or '/MapServer/tile/' in url:
-            # Swap x and y for ESRI servers
-            coord = TileCoord(z=int(z), x=int(y), y=int(x))
-        else:
-            coord = TileCoord(z=int(z), x=int(x), y=int(y))
+        if 'arcgisonline.com' in url_lower or 'arcgis.com' in url_lower:
+            print(f"[TileDetector] ESRI tile captured:")
+            print(f"  URL: {url}")
+            print(f"  Parsed: z={z}, x={x}, y={y}")
+            print(f"  Stored as: {coord}", flush=True)
 
         source = self._create_source(url, ext, tile_type)
 

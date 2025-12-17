@@ -52,7 +52,7 @@ image = (
     )
     # Then install the package
     .pip_install(
-        "git+https://github.com/research-project-studio/snowglobe.git@040546f#subdirectory=cli",
+        "git+https://github.com/research-project-studio/snowglobe.git@793ecb3#subdirectory=cli",
         "fastapi>=0.109.0",
         "nest_asyncio",
     )
