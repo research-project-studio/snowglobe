@@ -35,11 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added content magic bytes detection as fallback when URL has no extension
   - Fixes misdetection of JPEG as PBF for ArcGIS tile servers
   - Now correctly identifies PNG (89504e47), JPEG (ffd8ff), WebP (RIFF...WEBP)
+- **ESRI/ArcGIS Tile Coordinates**: Fixed critical coordinate swap bug for ESRI tile servers
+  - ESRI uses {z}/{y}/{x} coordinate order, not standard {z}/{x}/{y}
+  - Added detection for arcgisonline.com, arcgis.com, and /MapServer/tile/ URLs
+  - Now swaps X and Y coordinates when capturing ESRI tiles
+  - Fixes tiles appearing in wrong geographic location (e.g., Greenland instead of NYC)
 - **Raster PMTiles URL**: Fixed PMTiles protocol URL for raster sources in viewer
-  - Changed from relative path to absolute URL (required by PMTiles protocol)
-  - Example: `pmtiles://tiles/source.pmtiles` → `pmtiles://http://localhost/.../tiles/source.pmtiles`
-  - Added console logging to help debug PMTiles source loading
-  - Fixes blank map when viewing raster-only archives
+  - Reverted to relative paths (e.g., `pmtiles://tiles/source.pmtiles`)
+  - Absolute URLs caused protocol handler issues
+  - Added comprehensive console logging for debugging tile loading
+  - Logs source bounds, zoom ranges, and map viewport for troubleshooting
 - **Tile Fetcher Diagnostics**: Added comprehensive error logging to coverage expansion
   - Now logs first 5 error messages when tile fetching fails
   - Logs authentication failure count and rate separately

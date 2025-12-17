@@ -73,7 +73,15 @@ class TileDetector:
         else:
             return None
 
-        coord = TileCoord(z=int(z), x=int(x), y=int(y))
+        # IMPORTANT: ESRI/ArcGIS tile servers use {z}/{y}/{x} order instead of {z}/{x}/{y}
+        # Detect and swap coordinates for these servers
+        url_lower = url.lower()
+        if 'arcgisonline.com' in url_lower or 'arcgis.com' in url_lower or '/MapServer/tile/' in url:
+            # Swap x and y for ESRI servers
+            coord = TileCoord(z=int(z), x=int(y), y=int(x))
+        else:
+            coord = TileCoord(z=int(z), x=int(x), y=int(y))
+
         source = self._create_source(url, ext, tile_type)
 
         return DetectedTile(coord=coord, source=source, content=content)

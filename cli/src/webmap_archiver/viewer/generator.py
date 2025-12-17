@@ -146,18 +146,15 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
 
                 if (sourceType === "raster") {{
                     // Raster source (PNG/JPG/WebP tiles)
-                    // PMTiles protocol requires absolute URL to the .pmtiles file
-                    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
-                    const pmtilesUrl = baseUrl + src.path;
-
+                    // PMTiles protocol: use relative path, not absolute URL
                     sources[src.name] = {{
                         type: "raster",
-                        url: "pmtiles://" + pmtilesUrl,
+                        url: "pmtiles://" + src.path,
                         tileSize: 256
                     }};
 
                     console.log("[WebMap Archiver] Adding raster source:", src.name);
-                    console.log("  PMTiles URL:", "pmtiles://" + pmtilesUrl);
+                    console.log("  PMTiles URL:", "pmtiles://" + src.path);
 
                     // Add raster layer
                     layers.push({{
@@ -465,9 +462,57 @@ VIEWER_TEMPLATE = '''<!DOCTYPE html>
             map.addControl(new maplibregl.NavigationControl(), "top-right");
             map.addControl(new maplibregl.ScaleControl(), "bottom-right");
 
+            // Debug: Log source events
+            map.on("sourcedata", (e) => {{
+                if (e.sourceId && e.isSourceLoaded) {{
+                    console.log("[WebMap Archiver] Source loaded:", e.sourceId, e.sourceDataType);
+                    // Check if source has tiles configured
+                    const source = map.getSource(e.sourceId);
+                    if (source) {{
+                        console.log("[WebMap Archiver] Source details for", e.sourceId, ":", {{
+                            type: source.type,
+                            tiles: source.tiles,
+                            minzoom: source.minzoom,
+                            maxzoom: source.maxzoom,
+                            bounds: source.bounds
+                        }});
+                    }}
+                }}
+            }});
+
+            map.on("styleimagemissing", (e) => {{
+                console.warn("[WebMap Archiver] Missing style image:", e.id);
+            }});
+
+            map.on("data", (e) => {{
+                if (e.dataType === "style") {{
+                    console.log("[WebMap Archiver] Style loaded");
+                    console.log("[WebMap Archiver] Map sources:", Object.keys(map.getStyle().sources));
+                    console.log("[WebMap Archiver] Map layers:", map.getStyle().layers.map(l => l.id));
+                }}
+            }});
+
             // Add layer toggle controls
             map.on("load", () => {{
                 console.log("[WebMap Archiver] Map loaded successfully");
+                console.log("[WebMap Archiver] Map center:", map.getCenter());
+                console.log("[WebMap Archiver] Map zoom:", map.getZoom());
+                console.log("[WebMap Archiver] Map bounds:", map.getBounds());
+                console.log("[WebMap Archiver] Loaded sources:", Object.keys(map.getStyle().sources));
+                console.log("[WebMap Archiver] Loaded layers:", map.getStyle().layers.map(l => `${{l.id}} (${{l.type}})`));
+
+                // Log each source's bounds and zoom range for debugging
+                console.log("[WebMap Archiver] Source bounds and zoom ranges:");
+                Object.keys(map.getStyle().sources).forEach(sourceId => {{
+                    const source = map.getSource(sourceId);
+                    if (source && source.bounds) {{
+                        const centerLng = (source.bounds[0] + source.bounds[2])/2;
+                        const centerLat = (source.bounds[1] + source.bounds[3])/2;
+                        console.log(`  ${{sourceId}}: zoom ${{source.minzoom}}-${{source.maxzoom}}, center: [${{centerLng.toFixed(4)}}, ${{centerLat.toFixed(4)}}]`);
+                    }}
+                }});
+                console.log("[WebMap Archiver] TIP: If map is blank, try panning/zooming to one of the source centers above");
+
                 const controlsDiv = document.getElementById("layer-controls");
 
                 Object.entries(layerGroups).forEach(([name, group]) => {{
