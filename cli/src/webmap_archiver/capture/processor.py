@@ -53,8 +53,16 @@ def process_capture_bundle(bundle: CaptureBundle) -> ProcessedCapture:
 
     # Process pre-extracted tiles
     if bundle.tiles:
+        esri_tile_count = 0
         for tile in bundle.tiles:
             source_id = tile.source_id
+
+            # Debug: Log first few ESRI tiles to understand coordinate system
+            if 'server' in source_id.lower() and esri_tile_count < 3:
+                print(f"[Processor] ESRI tile {esri_tile_count + 1}:")
+                print(f"  URL: {tile.url}")
+                print(f"  Coord: z={tile.coord.z}, x={tile.coord.x}, y={tile.coord.y}", flush=True)
+                esri_tile_count += 1
 
             if source_id not in tiles_by_source:
                 tiles_by_source[source_id] = []
