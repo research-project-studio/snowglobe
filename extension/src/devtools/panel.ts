@@ -453,6 +453,14 @@
         console.error("[WebMap Archiver] Could not determine page URL");
       }
 
+      updateProgress(20, "Extracting GeoJSON sources...");
+
+      // Extract GeoJSON data from all GeoJSON sources
+      // This uses querySourceFeatures() to get actual loaded features
+      if (styleResult && styleResult.style) {
+        styleResult.style = await extractGeoJSONSources(styleResult.style);
+      }
+
       updateProgress(30, "Building capture bundle...");
 
       // Build capture bundle
@@ -540,6 +548,165 @@
     });
 
     resetToIdle();
+  }
+
+  // ============================================================================
+  // GEOJSON EXTRACTION
+  // ============================================================================
+
+  /**
+   * Extract GeoJSON data from all GeoJSON sources using querySourceFeatures().
+   * This is called at "Stop Capture" time, after async data has loaded.
+   */
+  async function extractGeoJSONSources(style: any): Promise<any> {
+    if (!style || !style.sources) {
+      return style;
+    }
+
+    console.log("[WebMap Archiver] Extracting GeoJSON sources...");
+
+    // Find all GeoJSON sources
+    const geojsonSourceIds = Object.entries(style.sources)
+      .filter(([, sourceDef]: [string, any]) => sourceDef.type === "geojson")
+      .map(([sourceId]) => sourceId);
+
+    if (geojsonSourceIds.length === 0) {
+      console.log("[WebMap Archiver] No GeoJSON sources found");
+      return style;
+    }
+
+    console.log(
+      `[WebMap Archiver] Found ${geojsonSourceIds.length} GeoJSON sources: ${geojsonSourceIds.join(", ")}`
+    );
+
+    // Extract features from each GeoJSON source using inspectedWindow.eval
+    const extractionScript = `
+      (function() {
+        try {
+          // Find the map instance
+          const container = document.querySelector('.maplibregl-map, .mapboxgl-map');
+          if (!container) {
+            return { error: 'No map container found' };
+          }
+
+          const map = container.__maplibregl || container._map || container.__mapboxgl ||
+                      window.map || window.maplibreMap || window.mapboxMap;
+          if (!map || typeof map.querySourceFeatures !== 'function') {
+            return { error: 'No map instance found' };
+          }
+
+          const style = map.getStyle();
+          if (!style || !style.sources) {
+            return { error: 'Could not get style' };
+          }
+
+          const geojsonSourceIds = ${JSON.stringify(geojsonSourceIds)};
+          const extractedData = {};
+
+          for (const sourceId of geojsonSourceIds) {
+            try {
+              const features = map.querySourceFeatures(sourceId);
+
+              if (!features || features.length === 0) {
+                console.warn('[WebMap Archiver] No features found in source ' + sourceId);
+
+                // Try _data fallback
+                const source = map.getSource(sourceId);
+                if (source && source._data) {
+                  extractedData[sourceId] = source._data;
+                  continue;
+                }
+
+                continue;
+              }
+
+              console.log('[WebMap Archiver] Extracted ' + features.length + ' features from ' + sourceId);
+
+              // Deduplicate features by ID or geometry
+              const seen = new Map();
+              const unique = [];
+              for (const f of features) {
+                const key = f.id !== undefined ? f.id : JSON.stringify(f.geometry);
+                if (!seen.has(key)) {
+                  seen.set(key, true);
+                  unique.push({
+                    type: 'Feature',
+                    geometry: f.geometry,
+                    properties: f.properties || {},
+                    ...(f.id !== undefined && { id: f.id }),
+                  });
+                }
+              }
+
+              extractedData[sourceId] = {
+                type: 'FeatureCollection',
+                features: unique,
+              };
+
+              console.log('[WebMap Archiver] Injected ' + unique.length + ' unique features into ' + sourceId);
+
+            } catch (e) {
+              console.error('[WebMap Archiver] Error extracting ' + sourceId + ':', e);
+            }
+          }
+
+          return { extractedData };
+
+        } catch (e) {
+          return { error: 'Extraction failed: ' + e.message };
+        }
+      })();
+    `;
+
+    return new Promise((resolve) => {
+      chrome.devtools.inspectedWindow.eval(
+        extractionScript,
+        (result: any, error: any) => {
+          if (error) {
+            console.error(
+              "[WebMap Archiver] GeoJSON extraction error:",
+              error
+            );
+            resolve(style);
+            return;
+          }
+
+          if (result && result.error) {
+            console.error("[WebMap Archiver] GeoJSON extraction failed:", result.error);
+            resolve(style);
+            return;
+          }
+
+          if (result && result.extractedData) {
+            // Inject extracted GeoJSON data into style
+            for (const [sourceId, data] of Object.entries(
+              result.extractedData
+            )) {
+              if (style.sources[sourceId]) {
+                style.sources[sourceId].data = data;
+
+                // Log size info
+                const sizeBytes = JSON.stringify(data).length;
+                const sizeMB = sizeBytes / (1024 * 1024);
+                const featureCount = (data as any).features?.length || 0;
+
+                console.log(
+                  `[WebMap Archiver] GeoJSON '${sourceId}': ${sizeMB.toFixed(2)}MB, ${featureCount} features`
+                );
+
+                if (sizeMB > 5) {
+                  console.warn(
+                    `[WebMap Archiver] Large GeoJSON source '${sourceId}': ${sizeMB.toFixed(1)}MB`
+                  );
+                }
+              }
+            }
+          }
+
+          resolve(style);
+        }
+      );
+    });
   }
 
   // ============================================================================

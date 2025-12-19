@@ -926,11 +926,12 @@ async def _build_archive(
 
         # Add sprites to archive
         if processed.sprites:
-            # Track which base files (1x) we have
+            # Track which base files (1x) we have and deduplicate
             has_base_png = False
             has_base_json = False
             fallback_png = None
             fallback_json = None
+            added_sprites = set()  # Track added filenames to avoid duplicates
 
             for sprite in processed.sprites:
                 # Determine filename from URL or use default with variant
@@ -956,7 +957,11 @@ async def _build_archive(
                         has_base_json = True
 
                 sprite_path = f"sprites/{filename}"
-                packager.temp_files.append((sprite_path, sprite.data))
+
+                # Only add if not already added (deduplication)
+                if sprite_path not in added_sprites:
+                    packager.temp_files.append((sprite_path, sprite.data))
+                    added_sprites.add(sprite_path)
 
             # If we're missing base sprites but have @2x, duplicate them as base
             # This handles cases where only high-DPI sprites were captured
