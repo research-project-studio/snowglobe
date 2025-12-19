@@ -7,9 +7,18 @@
 import { MapDetector, getDetectedMaps } from "./detector";
 import { captureStyleViaInjection } from "./capturer";
 import { DetectedMap } from "../types/map-libraries";
+import { mapHookScript } from "./map-hook";
 
 let detectedMaps: DetectedMap[] = [];
 let detector: MapDetector | null = null;
+
+// Inject map constructor hook IMMEDIATELY (before page scripts run)
+(function injectMapHook() {
+  const script = document.createElement("script");
+  script.textContent = mapHookScript;
+  (document.head || document.documentElement).appendChild(script);
+  script.remove();
+})();
 
 /**
  * Initialize detection on page load.
