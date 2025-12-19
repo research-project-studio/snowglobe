@@ -117,6 +117,16 @@ STYLE_EXTRACTION_SCRIPT = """
       }
     }
 
+    // Check for mapboxgl globals with instances
+    if (window.mapboxgl && window.mapboxgl._instances) {
+      for (const instance of Object.values(window.mapboxgl._instances)) {
+        if (isMapInstance(instance)) {
+          result.debug.method = 'mapboxgl._instances';
+          return extractFromMap(instance);
+        }
+      }
+    }
+
     return false;
   }
 
@@ -299,10 +309,27 @@ STYLE_EXTRACTION_SCRIPT = """
     return result;
   }
 
-  // Try canvas search (last resort)
+  // Try canvas search
   if (tryCanvasSearch(container)) {
     return result;
   }
+
+  // Last resort: Scan ALL window properties for map instances
+  // This handles cases where map is in a closure but accessible via some property
+  try {
+    const allWindowProps = Object.keys(window);
+    for (const key of allWindowProps) {
+      try {
+        const val = window[key];
+        if (val && typeof val === 'object' && isMapInstance(val)) {
+          result.debug.method = 'window.' + key + ' (deep scan)';
+          return extractFromMap(val);
+        }
+      } catch (e) {
+        // Skip inaccessible properties
+      }
+    }
+  } catch (e) {}
 
   // Nothing worked
   result.error = 'Map instance not found. Searched ' + result.debug.nodesSearched + ' nodes.';
