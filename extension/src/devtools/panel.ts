@@ -455,10 +455,22 @@
 
       updateProgress(20, "Extracting GeoJSON sources...");
 
+      // Debug: Log what we got from style capture
+      console.log("[WebMap Archiver] Style result:", styleResult);
+      console.log("[WebMap Archiver] Has style:", !!styleResult?.style);
+      if (styleResult?.style?.sources) {
+        const sources = styleResult.style.sources;
+        console.log("[WebMap Archiver] Style sources:", Object.keys(sources));
+        console.log("[WebMap Archiver] Source types:",
+          Object.entries(sources).map(([name, def]: [string, any]) => `${name}: ${def.type}`));
+      }
+
       // Extract GeoJSON data from all GeoJSON sources
       // This uses querySourceFeatures() to get actual loaded features
       if (styleResult && styleResult.style) {
         styleResult.style = await extractGeoJSONSources(styleResult.style);
+      } else {
+        console.warn("[WebMap Archiver] No style captured - skipping GeoJSON extraction");
       }
 
       updateProgress(30, "Building capture bundle...");
